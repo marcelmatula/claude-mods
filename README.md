@@ -29,7 +29,7 @@ Or add the marketplace first:
 
 Each mod is a folder with its own `.claude-plugin/plugin.json`, README and tests. `.claude-plugin/marketplace.json` lists each one with `"source": "./<folder>"`, so adding a mod means adding a folder and one entry there.
 
-Releases are tagged `<mod>-v<version>`. limits-meter's first release predates the marketplace and is tagged `v0.1.0`.
+Releases are tagged `<mod>-v<version>`, for example `limits-meter-v0.1.0`.
 
 To try local edits through the marketplace, add your clone instead: `/plugin marketplace add <path to clone>`. Claude Code then reads the mods from that folder, so `/reload-plugins` picks up an edit.
 
