@@ -1,6 +1,6 @@
 # claude-mods
 
-[![Check mods](https://github.com/marcelmatula/claude-mods/actions/workflows/check.yml/badge.svg?branch=main)](https://github.com/marcelmatula/claude-mods/actions/workflows/check.yml)
+[![Check mods](https://github.com/marcelmatula/claude-mods/actions/workflows/check.yml/badge.svg?branch=main)](https://github.com/marcelmatula/claude-mods/actions/workflows/check.yml) [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/marcelmatula/claude-mods/badge)](https://scorecard.dev/viewer/?uri=github.com/marcelmatula/claude-mods)
 
 Marcel's mods for Claude Code, in one plugin marketplace: `marcel-mods`.
 
@@ -43,6 +43,7 @@ To try local edits through the marketplace, add your clone instead: `/plugin mar
 - `main` can't be force-pushed or deleted, and a commit lands on it only after "Check mods" has passed on that commit. So push a branch or open a pull request first, and move `main` once the check is green.
 - Release tags (`*-v*`) can't be moved or deleted once pushed.
 - Dependabot keeps the commit-pinned GitHub Actions up to date.
+- [OpenSSF Scorecard](https://scorecard.dev/viewer/?uri=github.com/marcelmatula/claude-mods) scores the repo's security practices on every push to `main` and weekly ([`.github/workflows/scorecard.yml`](.github/workflows/scorecard.yml)).
 
 ## License
 
