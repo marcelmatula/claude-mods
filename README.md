@@ -1,5 +1,7 @@
 # claude-mods
 
+[![Check mods](https://github.com/marcelmatula/claude-mods/actions/workflows/check.yml/badge.svg?branch=main)](https://github.com/marcelmatula/claude-mods/actions/workflows/check.yml)
+
 Marcel's mods for Claude Code, in one plugin marketplace: `marcel-mods`.
 
 | Mod | What it does |
