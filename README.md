@@ -2,12 +2,9 @@
 
 A Claude Code mod that shows your usage limits for the current session (5 h) and the week as small progress bars with a percentage. They sit on a centred row at the bottom of the screen, under the prompt's hint line.
 
-```
-  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents
-                                       Session ███       38%   Week ██████▌   82%
-```
+![limits-meter under the Claude Code prompt: Session 38 % in green and Week 82 % in red, centred on the row below the hint line](docs/screenshot.svg)
 
-Each bar is green below 50 %, yellow from 50 % and red from 80 %, in your theme's colours.
+Each bar is green below 50 %, yellow from 50 % and red from 80 %, in your theme's colours. The screenshot is the mod running in a 120-column terminal with sample readings.
 
 ## Install
 
