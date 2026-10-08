@@ -4,7 +4,7 @@ A Claude Code mod that shows your usage limits for the current session (5 h) and
 
 ```
   ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents
-                                       Session ███▏      38%   Week ██████▌   82%
+                                       Session ███       38%   Week ██████▌   82%
 ```
 
 Each bar is green below 50 %, yellow from 50 % and red from 80 %, in your theme's colours.
