@@ -27,11 +27,17 @@ Or add the marketplace first:
 
 `/plugin marketplace update marcel-mods` fetches new mods and versions.
 
+## Feedback and contributing
+
+- Bugs and feature ideas: [open an issue](https://github.com/marcelmatula/claude-mods/issues).
+- Changes: pull requests are welcome; [CONTRIBUTING.md](CONTRIBUTING.md) covers the process and what a change needs.
+- Security problems: report them privately, as [SECURITY.md](SECURITY.md) describes.
+
 ## Layout
 
 Each mod is a folder with its own `.claude-plugin/plugin.json`, README, tests and `capabilities.json`, which lists the hooks and `$` calls the mod uses. `.claude-plugin/marketplace.json` lists each mod with `"source": "./<folder>"`, so adding a mod means adding a folder and one entry there.
 
-On every push and pull request, CI ([`.github/workflows/check.yml`](.github/workflows/check.yml)) runs `claude plugin validate` at the root, then `claude plugin validate` and `claude plugin test` in each mod folder, on Claude Code 2.1.294 (pinned by hash in [`.github/claude-code/package-lock.json`](.github/claude-code/package-lock.json)). It also runs [`.github/scripts/check-capabilities.mjs`](.github/scripts/check-capabilities.mjs) on each mod, which fails if the mod uses a hook or `$` call that its `capabilities.json` doesn't declare. Each mod therefore needs at least one `*.test.ts` or `*.test.tsx`, and a `capabilities.json`. To run the same check locally: `node .github/scripts/check-capabilities.mjs <mod>`.
+On every push and pull request, CI ([`.github/workflows/check.yml`](.github/workflows/check.yml)) runs `claude plugin validate --strict` at the root, then `claude plugin validate --strict` and `claude plugin test` in each mod folder, on Claude Code 2.1.294 (pinned by hash in [`.github/claude-code/package-lock.json`](.github/claude-code/package-lock.json)). It also runs [`.github/scripts/check-capabilities.mjs`](.github/scripts/check-capabilities.mjs) on each mod, which fails if the mod uses a hook or `$` call that its `capabilities.json` doesn't declare. Each mod therefore needs at least one `*.test.ts` or `*.test.tsx`, and a `capabilities.json`. To run the same check locally: `node .github/scripts/check-capabilities.mjs <mod>`.
 
 Releases are tagged `<mod>-v<version>`, for example `limits-meter-v0.1.0`.
 
