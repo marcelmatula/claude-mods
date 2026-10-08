@@ -47,3 +47,7 @@ claude plugin validate .
 claude plugin test .
 claude --plugin-dir .
 ```
+
+## License
+
+MIT. See [LICENSE](LICENSE).
