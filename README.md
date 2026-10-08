@@ -29,6 +29,8 @@ Or add the marketplace first:
 
 Each mod is a folder with its own `.claude-plugin/plugin.json`, README and tests. `.claude-plugin/marketplace.json` lists each one with `"source": "./<folder>"`, so adding a mod means adding a folder and one entry there.
 
+On every push and pull request, CI ([`.github/workflows/check.yml`](.github/workflows/check.yml)) runs `claude plugin validate` at the root, then `claude plugin validate` and `claude plugin test` in each mod folder, on Claude Code 2.1.294. Each mod therefore needs at least one `*.test.ts` or `*.test.tsx`.
+
 Releases are tagged `<mod>-v<version>`, for example `limits-meter-v0.1.0`.
 
 To try local edits through the marketplace, add your clone instead: `/plugin marketplace add <path to clone>`. Claude Code then reads the mods from that folder, so `/reload-plugins` picks up an edit.
