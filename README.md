@@ -40,7 +40,7 @@ To try local edits through the marketplace, add your clone instead: `/plugin mar
 ## Security
 
 - Report vulnerabilities privately: see [SECURITY.md](SECURITY.md).
-- `main` can't be force-pushed or deleted, and a commit lands on it only after "Check mods" has passed on that commit. So push a branch or open a pull request first, and move `main` once the check is green.
+- Changes reach `main` only through pull requests, once "Check mods" has passed and the branch is up to date with `main`. `main` can't be force-pushed or deleted.
 - Release tags (`*-v*`) can't be moved or deleted once pushed.
 - Dependabot keeps the commit-pinned GitHub Actions up to date.
 - CodeQL scans the mods, the scripts and the workflows on every push to `main`, on pull requests and weekly ([`.github/workflows/codeql.yml`](.github/workflows/codeql.yml)).
