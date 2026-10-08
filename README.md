@@ -37,6 +37,13 @@ Releases are tagged `<mod>-v<version>`, for example `limits-meter-v0.1.0`.
 
 To try local edits through the marketplace, add your clone instead: `/plugin marketplace add <path to clone>`. Claude Code then reads the mods from that folder, so `/reload-plugins` picks up an edit.
 
+## Security
+
+- Report vulnerabilities privately: see [SECURITY.md](SECURITY.md).
+- `main` can't be force-pushed or deleted, and a commit lands on it only after "Check mods" has passed on that commit. So push a branch or open a pull request first, and move `main` once the check is green.
+- Release tags (`*-v*`) can't be moved or deleted once pushed.
+- Dependabot keeps the commit-pinned GitHub Actions up to date.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
