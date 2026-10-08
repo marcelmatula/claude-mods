@@ -1,52 +1,37 @@
-# limits-meter
+# claude-mods
 
-A Claude Code mod that shows your usage limits for the current session (5 h) and the week as small progress bars with a percentage. They sit on a centred row at the bottom of the screen, under the prompt's hint line.
+Marcel's mods for Claude Code, in one plugin marketplace: `marcel-mods`.
 
-![limits-meter under the Claude Code prompt: Session 38 % in green and Week 82 % in red, centred on the row below the hint line](docs/screenshot.svg)
+| Mod | What it does |
+| --- | --- |
+| [limits-meter](limits-meter) | Shows your session (5 h) and weekly usage limits as small progress bars under the prompt. |
 
-Each bar is green below 50 %, yellow from 50 % and red from 80 %, in your theme's colours. The screenshot is the mod running in a 120-column terminal with sample readings.
-
-## Install
+## Install a mod
 
 Type this at the prompt of a Claude Code terminal session:
 
 ```
-/plugin install limits-meter --marketplace marcelmatula/limits-meter
+/plugin install limits-meter --marketplace marcelmatula/claude-mods
 ```
 
-Answer `y` to add the marketplace, then pick a scope (user scope loads it in every session). The mod is active in that session at once; the meters show as soon as it has a reading, at the latest after the next response.
+Answer `y` to add the marketplace, then pick a scope (user scope loads the mod in every session). Once the marketplace is added, other mods from it install with `/plugin install <mod>@marcel-mods`.
 
-Or in two steps:
+Or add the marketplace first:
 
 ```
-/plugin marketplace add marcelmatula/limits-meter
+/plugin marketplace add marcelmatula/claude-mods
 /plugin install limits-meter@marcel-mods
 ```
 
-## What to expect
+`/plugin marketplace update marcel-mods` fetches new mods and versions.
 
-- The figures are the ones Claude Code receives with each response, so the mod makes no requests of its own. They update whenever a window moves by a whole point.
-- On a Claude subscription only: with an API key there are no rate-limit windows to show. In a new session the row appears after the first response.
-- It adds one line at the bottom. While Claude Code shows a notice on the hint line (for example "Context left until auto-compact"), the notice moves to its own line under the meters.
-- On a narrow terminal the labels shorten to `5h` and `7d` and the bars get shorter. Below about 20 columns the row is hidden.
+## Layout
 
-## How it works
+Each mod is a folder with its own `.claude-plugin/plugin.json`, README and tests. `.claude-plugin/marketplace.json` lists each one with `"source": "./<folder>"`, so adding a mod means adding a folder and one entry there.
 
-`hooks/register.tsx` is a plugin of function hooks:
+Releases are tagged `<mod>-v<version>`. limits-meter's first release predates the marketplace and is tagged `v0.1.0`.
 
-- `session.start` reads the current windows with `$.session.usage()`.
-- `session.measure` keeps them up to date as responses arrive.
-- A `ui.render` hook on the `PromptHint` site draws Claude Code's own hint line unchanged and adds the meter row below it.
-
-Built and tested on Claude Code 2.1.294. The function-hooks plugin API is early access and may change between releases.
-
-## Development
-
-```
-claude plugin validate .
-claude plugin test .
-claude --plugin-dir .
-```
+To try local edits through the marketplace, add your clone instead: `/plugin marketplace add <path to clone>`. Claude Code then reads the mods from that folder, so `/reload-plugins` picks up an edit.
 
 ## License
 
