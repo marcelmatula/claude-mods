@@ -31,7 +31,7 @@ Or add the marketplace first:
 
 Each mod is a folder with its own `.claude-plugin/plugin.json`, README, tests and `capabilities.json`, which lists the hooks and `$` calls the mod uses. `.claude-plugin/marketplace.json` lists each mod with `"source": "./<folder>"`, so adding a mod means adding a folder and one entry there.
 
-On every push and pull request, CI ([`.github/workflows/check.yml`](.github/workflows/check.yml)) runs `claude plugin validate` at the root, then `claude plugin validate` and `claude plugin test` in each mod folder, on Claude Code 2.1.294. It also runs [`.github/scripts/check-capabilities.mjs`](.github/scripts/check-capabilities.mjs) on each mod, which fails if the mod uses a hook or `$` call that its `capabilities.json` doesn't declare. Each mod therefore needs at least one `*.test.ts` or `*.test.tsx`, and a `capabilities.json`. To run the same check locally: `node .github/scripts/check-capabilities.mjs <mod>`.
+On every push and pull request, CI ([`.github/workflows/check.yml`](.github/workflows/check.yml)) runs `claude plugin validate` at the root, then `claude plugin validate` and `claude plugin test` in each mod folder, on Claude Code 2.1.294 (pinned by hash in [`.github/claude-code/package-lock.json`](.github/claude-code/package-lock.json)). It also runs [`.github/scripts/check-capabilities.mjs`](.github/scripts/check-capabilities.mjs) on each mod, which fails if the mod uses a hook or `$` call that its `capabilities.json` doesn't declare. Each mod therefore needs at least one `*.test.ts` or `*.test.tsx`, and a `capabilities.json`. To run the same check locally: `node .github/scripts/check-capabilities.mjs <mod>`.
 
 Releases are tagged `<mod>-v<version>`, for example `limits-meter-v0.1.0`.
 
@@ -43,6 +43,7 @@ To try local edits through the marketplace, add your clone instead: `/plugin mar
 - `main` can't be force-pushed or deleted, and a commit lands on it only after "Check mods" has passed on that commit. So push a branch or open a pull request first, and move `main` once the check is green.
 - Release tags (`*-v*`) can't be moved or deleted once pushed.
 - Dependabot keeps the commit-pinned GitHub Actions up to date.
+- CodeQL scans the mods, the scripts and the workflows on every push to `main`, on pull requests and weekly ([`.github/workflows/codeql.yml`](.github/workflows/codeql.yml)).
 - [OpenSSF Scorecard](https://scorecard.dev/viewer/?uri=github.com/marcelmatula/claude-mods) scores the repo's security practices on every push to `main` and weekly ([`.github/workflows/scorecard.yml`](.github/workflows/scorecard.yml)).
 
 ## License

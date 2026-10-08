@@ -1,0 +1,8 @@
+{
+  "name": "claude-mods-ci",
+  "private": true,
+  "description": "Pins the Claude Code version that CI checks the mods with",
+  "dependencies": {
+    "@anthropic-ai/claude-code": "2.1.294"
+  }
+}

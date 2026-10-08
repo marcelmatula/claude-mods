@@ -11,17 +11,20 @@ jobs:
   check:
     runs-on: ubuntu-latest
     env:
-      # The function-hooks plugin API is early access: pin the version the mods are tested on.
-      CLAUDE_CODE_VERSION: 2.1.294
       DISABLE_AUTOUPDATER: 1
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: 1
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # The function-hooks plugin API is early access, so the mods are checked on one pinned
+      # version: .github/claude-code/package-lock.json fixes it, platform binaries included,
+      # by hash. To move on, change the version in package.json and run `npm install` there.
       - name: Install Claude Code
+        working-directory: .github/claude-code
         run: |
-          npm install --global "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
-          claude --version
+          npm ci --no-audit --no-fund
+          echo "$PWD/node_modules/.bin" >> "$GITHUB_PATH"
+          node_modules/.bin/claude --version
 
       - name: Validate the marketplace
         run: claude plugin validate .
