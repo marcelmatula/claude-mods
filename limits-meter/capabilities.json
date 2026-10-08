@@ -1,0 +1,4 @@
+{
+  "hooks": ["session.measure", "session.start", "ui.render{component=PromptHint}"],
+  "calls": ["$.session.usage", "$.state.get", "$.state.set", "$.ui.resolve"]
+}

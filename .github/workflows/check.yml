@@ -27,7 +27,8 @@ jobs:
         run: claude plugin validate .
 
       # A mod is a folder with .claude-plugin/plugin.json. Every mod is checked even
-      # when an earlier one fails; a mod without *.test.ts(x) fails `plugin test`.
+      # when an earlier one fails; a mod without *.test.ts(x) fails `plugin test`, and
+      # one whose hooks or $ calls go beyond its capabilities.json fails the last check.
       - name: Validate and test each mod
         run: |
           status=0
@@ -39,6 +40,7 @@ jobs:
             echo "::group::$mod"
             (cd "$mod" && claude plugin validate .) || { echo "::error title=$mod::claude plugin validate failed"; status=1; }
             (cd "$mod" && claude plugin test .) || { echo "::error title=$mod::claude plugin test failed"; status=1; }
+            node .github/scripts/check-capabilities.mjs "$mod" || status=1
             echo "::endgroup::"
           done
           if [ "$found" -eq 0 ]; then

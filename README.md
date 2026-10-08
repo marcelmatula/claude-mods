@@ -29,9 +29,9 @@ Or add the marketplace first:
 
 ## Layout
 
-Each mod is a folder with its own `.claude-plugin/plugin.json`, README and tests. `.claude-plugin/marketplace.json` lists each one with `"source": "./<folder>"`, so adding a mod means adding a folder and one entry there.
+Each mod is a folder with its own `.claude-plugin/plugin.json`, README, tests and `capabilities.json`, which lists the hooks and `$` calls the mod uses. `.claude-plugin/marketplace.json` lists each mod with `"source": "./<folder>"`, so adding a mod means adding a folder and one entry there.
 
-On every push and pull request, CI ([`.github/workflows/check.yml`](.github/workflows/check.yml)) runs `claude plugin validate` at the root, then `claude plugin validate` and `claude plugin test` in each mod folder, on Claude Code 2.1.294. Each mod therefore needs at least one `*.test.ts` or `*.test.tsx`.
+On every push and pull request, CI ([`.github/workflows/check.yml`](.github/workflows/check.yml)) runs `claude plugin validate` at the root, then `claude plugin validate` and `claude plugin test` in each mod folder, on Claude Code 2.1.294. It also runs [`.github/scripts/check-capabilities.mjs`](.github/scripts/check-capabilities.mjs) on each mod, which fails if the mod uses a hook or `$` call that its `capabilities.json` doesn't declare. Each mod therefore needs at least one `*.test.ts` or `*.test.tsx`, and a `capabilities.json`. To run the same check locally: `node .github/scripts/check-capabilities.mjs <mod>`.
 
 Releases are tagged `<mod>-v<version>`, for example `limits-meter-v0.1.0`.
 

@@ -32,6 +32,32 @@ Or in two steps:
 - It adds one line at the bottom. While Claude Code shows a notice on the hint line (for example "Context left until auto-compact"), the notice moves to its own line under the meters.
 - On a narrow terminal the labels shorten to `5h` and `7d` and the bars get shorter. Below about 20 columns the row is hidden.
 
+## What it can access
+
+A mod runs inside Claude Code's plugin sandbox and can reach the outside only through `$` calls. On Claude Code 2.1.294 the sandbox has no `fetch`, `require`, `process` or `eval`, and the validator refuses disguised `$` access, so its list of hooks and calls covers everything a mod can do. For limits-meter that list is:
+
+| Hooks | When they run |
+| --- | --- |
+| `session.start` | once when a session starts |
+| `session.measure` | when Claude Code's usage figures change |
+| `ui.render` on `PromptHint` | when the line under the prompt is drawn |
+
+| `$` calls | What for |
+| --- | --- |
+| `$.session.usage` | reads the rate-limit figures |
+| `$.state.get`, `$.state.set` | keeps those figures for the session, in the mod's own state |
+| `$.ui.resolve` | gets the elements it draws with |
+
+So it reads no files, runs no commands and makes no network requests. It has no hooks on your prompts or on Claude's tool calls.
+
+Check this yourself from a clone of the repo, in the `hooks:` and `calls:` lines:
+
+```
+claude plugin validate limits-meter
+```
+
+[`capabilities.json`](capabilities.json) holds the same list. CI fails if the mod's hooks or `$` calls ever go beyond it, so any new kind of access has to show up as a change to that file.
+
 ## How it works
 
 `hooks/register.tsx` is a plugin of function hooks:
