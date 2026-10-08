@@ -1,0 +1,6 @@
+{
+  "name": "marcel-mods",
+  "description": "Marcel's Claude Code mods",
+  "owner": { "name": "Marcel" },
+  "plugins": [{ "name": "limits-meter", "source": "./" }]
+}
