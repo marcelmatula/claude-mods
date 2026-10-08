@@ -1,6 +1,6 @@
 # claude-mods
 
-[![Check mods](https://github.com/marcelmatula/claude-mods/actions/workflows/check.yml/badge.svg?branch=main)](https://github.com/marcelmatula/claude-mods/actions/workflows/check.yml) [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/marcelmatula/claude-mods/badge)](https://scorecard.dev/viewer/?uri=github.com/marcelmatula/claude-mods) [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15312/badge)](https://www.bestpractices.dev/projects/15312)
+[![Check mods](https://github.com/marcelmatula/claude-mods/actions/workflows/check.yml/badge.svg?branch=main)](https://github.com/marcelmatula/claude-mods/actions/workflows/check.yml) [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/marcelmatula/claude-mods/badge)](https://scorecard.dev/viewer/?uri=github.com/marcelmatula/claude-mods) [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15312/badge.svg)](https://www.bestpractices.dev/projects/15312)
 
 Marcel's mods for Claude Code, in one plugin marketplace: `marcel-mods`.
 
