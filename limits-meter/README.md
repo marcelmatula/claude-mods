@@ -1,6 +1,6 @@
 # limits-meter
 
-A Claude Code mod that shows your usage limits for the current session (5 h) and the week as small progress bars with a percentage. They sit on a centred row at the bottom of the screen, under the prompt's hint line.
+A Claude Code mod that shows your usage limits for the current session (5 h) and the week as small progress bars with a percentage. They sit on a centred row at the bottom of the screen, under the prompt's hint line. `/limits` hides or shows them, and the choice is remembered.
 
 Part of [claude-mods](../README.md), Marcel's Claude Code marketplace (`marcel-mods`).
 
