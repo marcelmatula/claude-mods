@@ -1,12 +1,14 @@
 {
   "name": "marcel-mods",
   "description": "Marcel's Claude Code mods",
-  "owner": { "name": "Marcel" },
+  "owner": {
+    "name": "Marcel"
+  },
   "plugins": [
     {
       "name": "limits-meter",
       "source": "./limits-meter",
-      "description": "Session (5 h) and weekly usage limits as small progress bars under the prompt"
+      "description": "Session (5 h) and weekly usage limits as small progress bars under the prompt; /limits hides or shows them"
     }
   ]
 }
