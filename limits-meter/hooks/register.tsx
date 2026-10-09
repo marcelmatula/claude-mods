@@ -4,6 +4,10 @@ import type { Register, SessionRateLimit } from 'claude-code'
 import type { Limit } from '../types'
 
 const limits = atom({ plugin: 'limits-meter', key: 'limits' } as const, [])
+const isHidden = atom({ plugin: 'limits-meter', key: 'isHidden' } as const, false)
+
+// $.store key that keeps the shown/hidden choice across sessions.
+const HIDDEN_KEY = 'isHidden'
 
 const WINDOWS = [
   { kind: 'five_hour', label: 'Session', short: '5h' },
@@ -40,8 +44,34 @@ const percentText = (percent: number) => `${Math.round(percent)}%`.padStart(4)
 const meterWidth = (tier: Tier, label: string) =>
   label.length + 1 + (tier.bar > 0 ? tier.bar + 1 : 0) + 4
 
+// What `/limits <args>` asks for: show, hide, flip, or undefined for anything else.
+const wanted = (args: string, hidden: boolean): boolean | undefined => {
+  const word = args.trim().toLowerCase()
+  if (word === '') return !hidden
+  if (word === 'off') return true
+  if (word === 'on') return false
+  return undefined
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
+    try {
+      const stored = await $.store.get(HIDDEN_KEY)
+      await update($, isHidden, () => stored === true)
+    } catch {
+      // No stored choice: the meters show.
+    }
+
+    try {
+      await $.command.register({
+        name: 'limits',
+        description: 'Show or hide the usage limits meter',
+        argumentHint: 'on|off',
+      })
+    } catch {
+      // Without the command the meters still work; they just can't be hidden.
+    }
+
     try {
       const { rateLimits } = await $.session.usage()
       await update($, limits, () => known(rateLimits))
@@ -60,8 +90,30 @@ export const register: Register = on => {
     return next(e)
   })
 
+  on('command.run', { command: 'limits' }, async ($, e) => {
+    const hidden = await read($, isHidden)
+    // A plugin's own $.command.run can leave args out; typed commands carry "".
+    const hide = wanted(e.args ?? '', hidden)
+    if (hide === undefined) {
+      return { text: 'Usage: /limits shows or hides the limits meter; /limits on and /limits off set it.' }
+    }
+
+    await update($, isHidden, () => hide)
+    try {
+      await $.store.set(HIDDEN_KEY, hide)
+    } catch {
+      return { text: `Limits meter ${hide ? 'hidden' : 'shown'} for this session; the choice could not be saved for later ones.` }
+    }
+
+    return { text: hide ? 'Limits meter hidden. /limits brings it back.' : 'Limits meter shown.' }
+  })
+
   on('ui.render', { component: 'PromptHint' }, async ($, e, next) => {
     const engine = await next(e)
+    if (await read($, isHidden)) {
+      return engine
+    }
+
     const list = await read($, limits)
     const readings = WINDOWS.flatMap(w => {
       const one = list.find(l => l.kind === w.kind)

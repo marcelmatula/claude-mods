@@ -96,3 +96,77 @@ describe('limits-meter', () => {
     }
   })
 })
+
+// An in-memory $.store beneath the plugin, so a test can read what was saved.
+const storeBeneath = (on: On, saved: Record<string, unknown>) => {
+  on('store.get', ($, e) => ({ value: saved[e.key] }))
+  on('store.set', ($, e) => {
+    saved[e.key] = e.value
+    return { value: undefined }
+  })
+}
+
+// Raises /limits the way typing it at the prompt does.
+const runLimits = ($: Engine, args = '') =>
+  $.command.run({ command: 'limits', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+
+const READINGS: SessionRateLimit[] = [
+  { kind: 'five_hour', percentUsed: 40 },
+  { kind: 'seven_day', percentUsed: 5 },
+]
+
+describe('/limits', () => {
+  test('off hides the row and saves the choice; on brings it back', async ($, on) => {
+    engineBeneath(on)
+    const saved: Record<string, unknown> = {}
+    storeBeneath(on, saved)
+    await measure($, READINGS)
+
+    for (const surface of SURFACES) {
+      const ui = await mountHint($, surface, 120)
+      expect(await ui.find({ type: 'Text', text: ' 40%' })).toBeDefined()
+
+      expect((await runLimits($, 'off')).text).toBe('Limits meter hidden. /limits brings it back.')
+      expect(saved.isHidden).toBe(true)
+      expect(await ui.drawn()).toEqual({ type: 'engine', ref: 0 })
+
+      expect((await runLimits($, ' ON ')).text).toBe('Limits meter shown.')
+      expect(saved.isHidden).toBe(false)
+      expect(await ui.find({ type: 'Text', text: ' 40%' })).toBeDefined()
+
+      await ui.unmount()
+    }
+  })
+
+  test('a bare /limits toggles, and an unknown argument changes nothing', async ($, on) => {
+    engineBeneath(on)
+    const saved: Record<string, unknown> = {}
+    storeBeneath(on, saved)
+    await measure($, READINGS)
+    const ui = await mountHint($, 'terminal', 120)
+
+    await runLimits($)
+    expect(saved.isHidden).toBe(true)
+    expect(await ui.find({ type: 'Text', text: /%/ })).toBeUndefined()
+
+    expect((await runLimits($, 'maybe')).text).toMatch(/^Usage: /)
+    expect(saved.isHidden).toBe(true)
+
+    await runLimits($, '')
+    expect(saved.isHidden).toBe(false)
+    expect(await ui.find({ type: 'Text', text: ' 40%' })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('a new session starts hidden when that was the saved choice', async ($, on) => {
+    engineBeneath(on)
+    on('session.start', ($, e) => ({ cwd: e.cwd }))
+    storeBeneath(on, { isHidden: true })
+    await $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
+    await measure($, READINGS)
+
+    const ui = await mountHint($, 'terminal', 120)
+    expect(await ui.drawn()).toEqual({ type: 'engine', ref: 0 })
+    await ui.unmount()
+  })
+})
