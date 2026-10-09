@@ -1,6 +1,6 @@
 {
   "name": "limits-meter",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Session (5h) and weekly usage limits as small progress bars, centred on the line under the prompt",
   "author": {
     "name": "Marcel"

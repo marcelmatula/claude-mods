@@ -1,4 +1,4 @@
 {
-  "hooks": ["session.measure", "session.start", "ui.render{component=PromptHint}"],
-  "calls": ["$.session.usage", "$.state.get", "$.state.set", "$.ui.resolve"]
+  "hooks": ["command.run{command=limits}", "session.measure", "session.start", "ui.render{component=PromptHint}"],
+  "calls": ["$.command.register", "$.session.usage", "$.state.get", "$.state.set", "$.store.get", "$.store.set", "$.ui.resolve"]
 }

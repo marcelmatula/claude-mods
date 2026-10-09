@@ -6,7 +6,7 @@ Marcel's mods for Claude Code, in one plugin marketplace: `marcel-mods`.
 
 | Mod | What it does |
 | --- | --- |
-| [limits-meter](limits-meter) | Shows your session (5 h) and weekly usage limits as small progress bars under the prompt. |
+| [limits-meter](limits-meter) | Shows your session (5 h) and weekly usage limits as small progress bars under the prompt. `/limits` hides or shows them. |
 
 [![limits-meter under the Claude Code prompt: Session 38 % in green and Week 82 % in red, on a centred row below the hint line](limits-meter/docs/screenshot.svg)](limits-meter)
 
