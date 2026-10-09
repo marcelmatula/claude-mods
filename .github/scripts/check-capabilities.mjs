@@ -63,7 +63,8 @@ for (const note of (report.contents ?? []).flatMap(entry => entry.notes ?? [])) 
   const [, kind, list] = match
   seen[kind] = true
   if (/^nothing\b/.test(list.trim())) continue
-  for (const item of splitList(list)) used[kind].add(item)
+  // A call made through a helper function is reported as "$.x.y (via helper)".
+  for (const item of splitList(list)) used[kind].add(item.replace(/ \(via [^)]*\)$/, ''))
 }
 
 if (existsSync(join(mod, 'hooks', 'hooks.json')) && !(seen.hooks && seen.calls)) {
