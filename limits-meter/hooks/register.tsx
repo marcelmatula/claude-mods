@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { Register, SessionRateLimit } from 'claude-code'
+import type { EngineInterface, Register, SessionRateLimit } from 'claude-code'
 
 import type { Limit } from '../types'
 
@@ -8,6 +8,14 @@ const isHidden = atom({ plugin: 'limits-meter', key: 'isHidden' } as const, fals
 
 // $.store key that keeps the shown/hidden choice across sessions.
 const HIDDEN_KEY = 'isHidden'
+
+// How often the meters check the engine's figures: an idle session gets no responses to
+// notice a reset by, and nothing else refills the state if it was emptied.
+const CHECK_MS = 60_000
+
+// How long after /clear or /resume the state is filled in again. The engine empties it
+// within a few milliseconds of session.end.
+const REFILL_DELAY_MS = 250
 
 const WINDOWS = [
   { kind: 'five_hour', label: 'Session', short: '5h' },
@@ -35,6 +43,14 @@ const known = (list: readonly SessionRateLimit[]): Limit[] =>
       resetsAt === undefined ? { kind, percentUsed } : { kind, percentUsed, resetsAt },
     )
 
+const hasReset = (one: Limit, now: number) =>
+  one.resetsAt !== undefined && Date.parse(one.resetsAt) <= now
+
+// A window starts again at 0% when its reset time passes, but Claude Code sends the new
+// figure only with the next response, so until then the mod resets it itself.
+const current = (list: readonly Limit[], now: number): Limit[] =>
+  list.map(one => (hasReset(one, now) ? { kind: one.kind, percentUsed: 0 } : one))
+
 const colorFor = (percent: number) =>
   percent >= 80 ? 'error' : percent >= 50 ? 'warning' : 'success'
 
@@ -43,6 +59,33 @@ const percentText = (percent: number) => `${Math.round(percent)}%`.padStart(4)
 // Cells one meter takes: "label ", the bar and a space, then "nn%" padded to 4.
 const meterWidth = (tier: Tier, label: string) =>
   label.length + 1 + (tier.bar > 0 ? tier.bar + 1 : 0) + 4
+
+// The engine's latest figures, with any window past its reset time at 0%. Written only
+// when they differ from the state's, since a write redraws the meters.
+async function refresh($: EngineInterface) {
+  const { rateLimits } = await $.session.usage()
+  const now = await $.clock.now()
+  const fresh = current(known(rateLimits), now)
+  if (JSON.stringify(fresh) !== JSON.stringify(await read($, limits))) {
+    await update($, limits, () => fresh)
+  }
+}
+
+// Fills the state a session starts from: the saved shown/hidden choice and the figures.
+async function fill($: EngineInterface) {
+  try {
+    const stored = await $.store.get(HIDDEN_KEY)
+    await update($, isHidden, () => stored === true)
+  } catch {
+    // No stored choice: the meters show.
+  }
+
+  try {
+    await refresh($)
+  } catch {
+    // No reading yet; session.measure fills it in after the next response.
+  }
+}
 
 // What `/limits <args>` asks for: show, hide, flip, or undefined for anything else.
 const wanted = (args: string, hidden: boolean): boolean | undefined => {
@@ -56,13 +99,6 @@ const wanted = (args: string, hidden: boolean): boolean | undefined => {
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     try {
-      const stored = await $.store.get(HIDDEN_KEY)
-      await update($, isHidden, () => stored === true)
-    } catch {
-      // No stored choice: the meters show.
-    }
-
-    try {
       await $.command.register({
         name: 'limits',
         description: 'Show or hide the usage limits meter',
@@ -72,11 +108,24 @@ export const register: Register = on => {
       // Without the command the meters still work; they just can't be hidden.
     }
 
-    try {
-      const { rateLimits } = await $.session.usage()
-      await update($, limits, () => known(rateLimits))
-    } catch {
-      // No reading yet; session.measure fills it in after the next response.
+    await fill($)
+
+    $.clock.every(CHECK_MS, async () => {
+      try {
+        await refresh($)
+      } catch {
+        // The next check tries again.
+      }
+    })
+
+    return next(e)
+  })
+
+  // /clear and /resume empty the session's state and run no session.start after it, while
+  // the engine keeps its figures, so the meters would stay away until a window moved.
+  on('session.end', async ($, e, next) => {
+    if (e.reason === 'clear' || e.reason === 'resume') {
+      $.clock.after(REFILL_DELAY_MS, () => void fill($))
     }
 
     return next(e)
@@ -84,7 +133,8 @@ export const register: Register = on => {
 
   on('session.measure', async ($, e, next) => {
     if (e.changed.includes('rateLimits')) {
-      await update($, limits, () => known(e.rateLimits))
+      const now = await $.clock.now()
+      await update($, limits, () => current(known(e.rateLimits), now))
     }
 
     return next(e)
@@ -105,7 +155,23 @@ export const register: Register = on => {
       return { text: `Limits meter ${hide ? 'hidden' : 'shown'} for this session; the choice could not be saved for later ones.` }
     }
 
-    return { text: hide ? 'Limits meter hidden. /limits brings it back.' : 'Limits meter shown.' }
+    if (hide) {
+      return { text: 'Limits meter hidden. /limits brings it back.' }
+    }
+
+    try {
+      await refresh($)
+    } catch {
+      // Answer from the figures the state has.
+    }
+
+    if ((await read($, limits)).length === 0) {
+      return {
+        text: 'Limits meter shown, but there are no usage figures yet. Claude Code gets them with its next response (on a Claude subscription).',
+      }
+    }
+
+    return { text: 'Limits meter shown.' }
   })
 
   on('ui.render', { component: 'PromptHint' }, async ($, e, next) => {

@@ -38,6 +38,8 @@ Claude Code's own hint line stays as it is either way. The choice is remembered 
 ## What to expect
 
 - The figures are the ones Claude Code receives with each response, so the mod makes no requests of its own. They update whenever a window moves by a whole point.
+- When a window's reset time passes while the session sits idle, its meter drops to 0 % within a minute, without waiting for the next response.
+- The meters stay through `/clear` and `/resume`, and so does a hidden meter's choice.
 - On a Claude subscription only: with an API key there are no rate-limit windows to show. In a new session the row appears after the first response.
 - It adds one line at the bottom. While Claude Code shows a notice on the hint line (for example "Context left until auto-compact"), the notice moves to its own line under the meters.
 - On a narrow terminal the labels shorten to `5h` and `7d` and the bars get shorter. Below about 20 columns the row is hidden.
@@ -50,6 +52,7 @@ A mod runs inside Claude Code's plugin sandbox and can reach the outside only th
 | --- | --- |
 | `session.start` | once when a session starts |
 | `session.measure` | when Claude Code's usage figures change |
+| `session.end` | when a session ends, to notice `/clear` and `/resume` |
 | `ui.render` on `PromptHint` | when the line under the prompt is drawn |
 | `command.run` on `limits` | when you run `/limits` |
 
@@ -57,6 +60,7 @@ A mod runs inside Claude Code's plugin sandbox and can reach the outside only th
 | --- | --- |
 | `$.session.usage` | reads the rate-limit figures |
 | `$.state.get`, `$.state.set` | keeps those figures for the session, in the mod's own state |
+| `$.clock.now`, `$.clock.every`, `$.clock.after` | checks once a minute whether a window's reset time has passed or the figures changed, and fills the meters in again just after `/clear` or `/resume` |
 | `$.ui.resolve` | gets the elements it draws with |
 | `$.command.register` | adds the `/limits` command |
 | `$.store.get`, `$.store.set` | keeps the shown or hidden choice between sessions |
@@ -77,6 +81,8 @@ claude plugin validate limits-meter
 
 - `session.start` reads the current windows with `$.session.usage()`.
 - `session.measure` keeps them up to date as responses arrive.
+- A timer started in `session.start` reads the figures again once a minute and sets a window whose reset time has passed to 0 %, since Claude Code sends the new figure only with the next response.
+- `/clear` and `/resume` empty the mod's session state and start no new `session.start`. A `session.end` hook sees them and, a moment later, reads the saved choice and the figures back in.
 - A `ui.render` hook on the `PromptHint` site draws Claude Code's own hint line unchanged and adds the meter row below it, unless the meter is hidden.
 - `/limits` is registered in `session.start` and answered by a `command.run` hook. It flips the hidden setting in the session's state, which redraws the row at once, and saves it with `$.store`. The next `session.start` reads it back.
 
