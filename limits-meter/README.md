@@ -84,7 +84,7 @@ A mod runs inside Claude Code's plugin sandbox and can reach the outside only th
 | `$.ui.resolve` | gets the elements it draws with |
 | `$.session.surfaces` | tells a session in the desktop app, which draws on no terminal, from a terminal session |
 | `$.ui.status` | shows the figures as text in the desktop app's prompt footer |
-| `$.command.register` | adds the `/limits` command |
+| `$.command.register`, `$.command.list` | adds the `/limits` command, and adds it again if the session no longer lists it |
 | `$.store.get`, `$.store.set` | keeps the shown or hidden choice between sessions, and passes the newest figures between your open sessions |
 
 It saves two things in the mod's own small store, which Claude Code keeps in your Claude Code configuration folder: the shown or hidden choice, and the newest usage figures (each window's percentage and reset time, and when they arrived). Beyond that it reads and writes no files, runs no shell commands and makes no network requests. It has no hooks on your prompts or on Claude's tool calls; its one command hook answers `/limits`.
@@ -107,7 +107,7 @@ claude plugin validate limits-meter
 - `/clear` and `/resume` empty the mod's session state and start no new `session.start`. A `session.end` hook sees them and, a moment later, reads the saved choice and the figures back in.
 - A `ui.render` hook on the `PromptHint` site draws Claude Code's own hint line unchanged and adds the meter row below it, unless the meter is hidden. It works each countdown out from a window's reset time and the recorded time.
 - In a session that draws on no terminal (the desktop app), the minute check, each new reading and `/limits` also set the mod's status entry with `$.ui.status`: the same figures as one line of text. A terminal session sets none.
-- `/limits` is registered in `session.start` and answered by a `command.run` hook. It flips the hidden setting in the session's state, which redraws the row at once, and saves it with `$.store`. The next `session.start` reads it back.
+- `/limits` is registered in `session.start` and answered by a `command.run` hook. The minute check registers it again when the session no longer lists it, as happened in a desktop app session the mod was updated under; should a load of the mod come without a `session.start`, its first reading registers the command and starts the minute check. It flips the hidden setting in the session's state, which redraws the row at once, and saves it with `$.store`. The next `session.start` reads it back.
 
 Built and tested on Claude Code 2.1.294. The function-hooks plugin API is early access and may change between releases.
 

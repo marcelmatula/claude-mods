@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.1
+
+- Fix: in a desktop app session that was running when the mod was updated, `/limits` went missing until a new session. The minute check now adds it again whenever the session no longer lists it. Should a load of the mod come without the session start that normally follows it, its first reading adds `/limits` and starts the minute check.
+- New access, declared in `capabilities.json` and the README's "What it can access" section: `$.command.list`, to see whether the session still lists `/limits`.
+
+Upgrade: nothing to do.
+
 ## 0.4.0
 
 - The Claude desktop app shows the figures. Its Code tab draws no hint line, so the meter row never appeared there; now a session in the app shows them as text in the prompt's footer, beside the model's name: `Session 61% ↻0:42 · Week 75% ↻2d 21h`. They count down every minute and `/limits` hides and shows them. Terminal sessions keep the meter row and show no such text.
