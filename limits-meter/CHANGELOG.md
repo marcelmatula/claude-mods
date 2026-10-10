@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.0
+
+- The Claude desktop app shows the figures. Its Code tab draws no hint line, so the meter row never appeared there; now a session in the app shows them as text in the prompt's footer, beside the model's name: `Session 61% ↻0:42 · Week 75% ↻2d 21h`. They count down every minute and `/limits` hides and shows them. Terminal sessions keep the meter row and show no such text.
+- Fix: a session you left idle while working in another one kept showing the figures from its own last response, say 61% when you were already at 91%. Your limits are shared by all your sessions, but each session gets figures only with its own responses. Now every session saves the newest figures it gets, and the others pick them up at their next minute check.
+- A new session shows the newest saved figures straight away, instead of waiting for its first response. A session on an API key, which has no rate-limit windows, drops them after its first response.
+- New access, declared in `capabilities.json` and the README's "What it can access" section: `$.session.surfaces`, to tell a desktop app session from a terminal one, and `$.ui.status`, to show the figures in the app's footer. The mod's store, which held only the shown or hidden choice, now also holds the newest figures and when they arrived, and the session state holds one more value, when the session's own figures arrived.
+
+Upgrade: nothing to do.
+
 ## 0.3.0
 
 - Each meter shows the time left until its window resets, dim, after its percentage: `↻2:31` (hours and minutes) for the session and `↻3d 4h` (days and hours) for the week, which reads hours and minutes in its last day. It counts down at the start of every minute without waiting for a response, and rounds up, so it never reads `0:00` before the reset. Each countdown keeps the same width, so the centred row doesn't shift as it ticks over.

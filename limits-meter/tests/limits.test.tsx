@@ -13,16 +13,26 @@ const HINT = { isDraft: false, isWorking: false, hint: '? for shortcuts' }
 // Stands in for the engine beneath the plugin. In a session `next(e)` answers the
 // hint line as an engine node, so that is what the meters are drawn around here.
 // It keeps the figures each measurement carried, as $.session.usage() answers them, and
-// a test can change them without one. Its clock stands at T0 until a test moves it.
+// a test can change them, and set a cost once responses have come, without one. Its clock
+// stands at T0 until a test moves it.
 const engineBeneath = (on: On) => {
-  const engine = { clock: mock.clock(on, { now: T0 }), rateLimits: [] as SessionRateLimit[] }
+  const engine = {
+    clock: mock.clock(on, { now: T0 }),
+    rateLimits: [] as SessionRateLimit[],
+    cost: undefined as { usd: number } | undefined,
+  }
   on('ui.render', { component: 'PromptHint' }, () => ({ type: 'engine', ref: 0 }))
   on('session.measure', ($, e) => {
     engine.rateLimits = e.rateLimits
     return { changed: e.changed }
   })
   on('session.usage', () => ({
-    value: { startedAt: T0, context: { window: 200_000 }, rateLimits: engine.rateLimits },
+    value: {
+      startedAt: T0,
+      context: { window: 200_000 },
+      rateLimits: engine.rateLimits,
+      ...(engine.cost === undefined ? {} : { cost: engine.cost }),
+    },
   }))
   on('session.start', ($, e) => ({ cwd: e.cwd }))
   on('session.end', ($, e) => ({ sessionId: e.sessionId }))
@@ -274,6 +284,160 @@ describe('countdowns', () => {
       await narrow.unmount()
     }
   })
+})
+
+// Each session's engine learns the figures only from its own responses, while the limits
+// are the account's, so the sessions share the newest reading through $.store.
+describe('other sessions', () => {
+  test('a session saves each reading for the others, but not one with no windows', async ($, on) => {
+    engineBeneath(on)
+    const saved: Record<string, unknown> = {}
+    storeBeneath(on, saved)
+
+    await measure($, READINGS)
+    expect(saved.reading).toEqual({ at: T0, limits: READINGS })
+
+    await measure($, [])
+    expect(saved.reading).toEqual({ at: T0, limits: READINGS })
+  })
+
+  test('an idle session picks up a newer reading within a minute', async ($, on) => {
+    const { clock } = engineBeneath(on)
+    const saved: Record<string, unknown> = {}
+    storeBeneath(on, saved)
+    await startSession($)
+    await measure($, [{ kind: 'five_hour', percentUsed: 61, resetsAt: at(HOUR) }])
+
+    const ui = await mountHint($, 'terminal', 120)
+    expect(await ui.find({ type: 'Text', text: ' 61%' })).toBeDefined()
+
+    // Forty minutes later another session's response saves a newer reading.
+    await clock.advance(40 * MINUTE)
+    saved.reading = { at: clock.now(), limits: [{ kind: 'five_hour', percentUsed: 91, resetsAt: at(HOUR) }] }
+    expect(await ui.find({ type: 'Text', text: ' 61%' })).toBeDefined()
+
+    await clock.advance(MINUTE)
+    expect((await ui.find({ type: 'Text', text: ' 91%' }))?.props.color).toBe('error')
+    expect(await ui.find({ type: 'Text', text: ' ↻0:19' })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test("an older saved reading does not replace the session's own", async ($, on) => {
+    const { clock } = engineBeneath(on)
+    const saved: Record<string, unknown> = {}
+    storeBeneath(on, saved)
+    await startSession($)
+    await clock.advance(10 * MINUTE)
+    await measure($, [{ kind: 'seven_day', percentUsed: 75 }])
+    saved.reading = { at: T0, limits: [{ kind: 'seven_day', percentUsed: 70 }] }
+
+    const ui = await mountHint($, 'terminal', 120)
+    await clock.advance(MINUTE)
+    expect(await ui.find({ type: 'Text', text: ' 75%' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: ' 70%' })).toBeUndefined()
+    await ui.unmount()
+  })
+
+  test('a new session shows the saved reading before its first response', async ($, on) => {
+    engineBeneath(on)
+    storeBeneath(on, {
+      reading: { at: T0 - 10 * MINUTE, limits: [{ kind: 'five_hour', percentUsed: 40, resetsAt: at(2 * HOUR) }] },
+    })
+    await startSession($)
+
+    const ui = await mountHint($, 'terminal', 120)
+    expect(await ui.find({ type: 'Text', text: ' 40%' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: ' ↻2:00' })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('a session on an API key drops the saved figures after its first response', async ($, on) => {
+    const engine = engineBeneath(on)
+    storeBeneath(on, { reading: { at: T0 - MINUTE, limits: [{ kind: 'five_hour', percentUsed: 40 }] } })
+    await startSession($)
+
+    const ui = await mountHint($, 'terminal', 120)
+    expect(await ui.find({ type: 'Text', text: ' 40%' })).toBeDefined()
+
+    // A response came and was priced, and it carried no rate-limit windows.
+    engine.cost = { usd: 0.02 }
+    await engine.clock.advance(MINUTE)
+    expect(await ui.drawn()).toEqual({ type: 'engine', ref: 0 })
+    await ui.unmount()
+  })
+
+  test("a saved reading the mod can't read is passed over", async ($, on) => {
+    const engine = engineBeneath(on)
+    storeBeneath(on, { reading: { at: 'later', limits: [{ kind: 'five_hour' }] } })
+    engine.rateLimits = [{ kind: 'seven_day', percentUsed: 30 }]
+    await startSession($)
+
+    const ui = await mountHint($, 'terminal', 120)
+    expect(await ui.find({ type: 'Text', text: ' 30%' })).toBeDefined()
+    await ui.unmount()
+  })
+})
+
+// The surfaces the session draws on, and a record of each status entry the plugin sets.
+const statusBeneath = (on: On, surfaces: ('terminal' | 'desktop' | 'mobile' | 'vscode')[]) => {
+  const statuses: (string | undefined)[] = []
+  on('session.surfaces', () => ({ value: surfaces }))
+  on('ui.status', ($, e) => {
+    statuses.push(e.text)
+    return { value: undefined }
+  })
+  return statuses
+}
+
+// The desktop app draws no hint line, so there the figures go in the status entry.
+describe('desktop app', () => {
+  const FIGURES: SessionRateLimit[] = [
+    { kind: 'five_hour', percentUsed: 61, resetsAt: at(42 * MINUTE) },
+    { kind: 'seven_day', percentUsed: 75, resetsAt: at(2 * DAY + 21 * HOUR) },
+  ]
+
+  test('a session that draws only on the desktop shows the figures as its status entry', async ($, on) => {
+    engineBeneath(on)
+    const statuses = statusBeneath(on, ['desktop'])
+
+    await measure($, FIGURES)
+    expect(statuses).toEqual(['Session 61% ↻0:42 · Week 75% ↻2d 21h'])
+  })
+
+  test('the status entry counts down each minute and follows /limits', async ($, on) => {
+    const { clock } = engineBeneath(on)
+    storeBeneath(on, {})
+    const statuses = statusBeneath(on, ['desktop'])
+    await startSession($)
+    await measure($, FIGURES)
+
+    await clock.advance(MINUTE)
+    expect(statuses.at(-1)).toBe('Session 61% ↻0:41 · Week 75% ↻2d 20h')
+
+    await runLimits($, 'off')
+    expect(statuses.at(-1)).toBeUndefined()
+    await runLimits($, 'on')
+    expect(statuses.at(-1)).toBe('Session 61% ↻0:41 · Week 75% ↻2d 20h')
+  })
+
+  test('a window that has reset shows 0% with no countdown', async ($, on) => {
+    const { clock } = engineBeneath(on)
+    const statuses = statusBeneath(on, ['desktop'])
+    await startSession($)
+    await measure($, [{ kind: 'five_hour', percentUsed: 98, resetsAt: at(90_000) }])
+
+    await clock.advance(2 * MINUTE)
+    expect(statuses.at(-1)).toBe('Session 0%')
+  })
+
+  for (const surfaces of [['terminal'], ['terminal', 'mobile']] as const) {
+    test(`a session drawn on ${surfaces.join(' and ')} sets no status entry`, async ($, on) => {
+      engineBeneath(on)
+      const statuses = statusBeneath(on, [...surfaces])
+      await measure($, FIGURES)
+      expect(statuses).toEqual([])
+    })
+  }
 })
 
 // /clear and /resume end the session (session.end), empty the plugin's state and start
