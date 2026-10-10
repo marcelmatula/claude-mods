@@ -440,6 +440,55 @@ describe('desktop app', () => {
   }
 })
 
+// The session's slash commands beneath the plugin: what $.command.list answers, which a
+// test can empty as a lost registration would, and each name the plugin registers.
+const commandsBeneath = (on: On) => {
+  const commands = { listed: [] as string[], registered: [] as string[] }
+  on('command.list', () => ({
+    value: commands.listed.map(name => ({ name, description: '', source: 'plugin' as const })),
+  }))
+  on('command.register', ($, e) => {
+    commands.registered.push(e.name)
+    commands.listed = [...new Set([...commands.listed, e.name])]
+    return { value: { command: e.name } }
+  })
+  return commands
+}
+
+describe('the /limits command', () => {
+  test('the minute check adds /limits back once the session no longer lists it', async ($, on) => {
+    const { clock } = engineBeneath(on)
+    const commands = commandsBeneath(on)
+    await startSession($)
+    expect(commands.registered).toEqual(['limits'])
+
+    await clock.advance(MINUTE)
+    expect(commands.registered).toEqual(['limits'])
+
+    // The registration went, as in a desktop app session the mod was updated under.
+    commands.listed = []
+    await clock.advance(MINUTE)
+    expect(commands.registered).toEqual(['limits', 'limits'])
+    expect(commands.listed).toEqual(['limits'])
+  })
+
+  test('a load with no session.start sets itself up at its first reading', async ($, on) => {
+    const { clock } = engineBeneath(on)
+    const commands = commandsBeneath(on)
+    await measure($, [{ kind: 'five_hour', percentUsed: 40, resetsAt: at(HOUR) }])
+    expect(commands.registered).toEqual(['limits'])
+
+    const ui = await mountHint($, 'terminal', 120)
+    await clock.advance(MINUTE)
+    expect(await ui.find({ type: 'Text', text: ' ↻0:59' })).toBeDefined()
+
+    // A second reading starts no second minute check.
+    await measure($, [{ kind: 'five_hour', percentUsed: 41, resetsAt: at(HOUR) }])
+    expect(commands.registered).toEqual(['limits'])
+    await ui.unmount()
+  })
+})
+
 // /clear and /resume end the session (session.end), empty the plugin's state and start
 // no session.start, while the engine keeps its figures.
 const endSession = ($: Engine, reason: 'clear' | 'resume') =>

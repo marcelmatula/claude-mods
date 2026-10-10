@@ -217,7 +217,44 @@ async function checkOnTheMinute($: EngineInterface) {
     } catch {
       // The next check tries again.
     }
+
+    await keepCommand($)
   })
+}
+
+// Whether this load of the module runs the minute check. session.start starts it, and
+// one follows every load of the module; should a load come without one, the next reading
+// starts it, and adds /limits.
+let isChecking = false
+
+async function startChecking($: EngineInterface) {
+  if (!isChecking) {
+    isChecking = true
+    await checkOnTheMinute($)
+  }
+}
+
+const COMMAND = { name: 'limits', description: 'Show or hide the usage limits meter', argumentHint: 'on|off' }
+
+// Adds /limits, replacing any registration the session already has.
+async function registerCommand($: EngineInterface) {
+  try {
+    await $.command.register(COMMAND)
+  } catch {
+    // Without the command the meters still work; they just can't be hidden.
+  }
+}
+
+// Adds /limits again when the session no longer lists it: a desktop app session that
+// was running when the mod was updated lost it.
+async function keepCommand($: EngineInterface) {
+  try {
+    if (!(await $.command.list()).some(c => c.name === COMMAND.name)) {
+      await registerCommand($)
+    }
+  } catch {
+    // The next check looks again.
+  }
 }
 
 // What `/limits <args>` asks for: show, hide, flip, or undefined for anything else.
@@ -231,18 +268,9 @@ const wanted = (args: string, hidden: boolean): boolean | undefined => {
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
-    try {
-      await $.command.register({
-        name: 'limits',
-        description: 'Show or hide the usage limits meter',
-        argumentHint: 'on|off',
-      })
-    } catch {
-      // Without the command the meters still work; they just can't be hidden.
-    }
-
+    await registerCommand($)
     await fill($)
-    await checkOnTheMinute($)
+    await startChecking($)
 
     return next(e)
   })
@@ -258,6 +286,11 @@ export const register: Register = on => {
   })
 
   on('session.measure', async ($, e, next) => {
+    if (!isChecking) {
+      await registerCommand($)
+      await startChecking($)
+    }
+
     if (e.changed.includes('rateLimits')) {
       const now = await $.clock.now()
       const reading = known(e.rateLimits)
