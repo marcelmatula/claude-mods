@@ -5,6 +5,9 @@ import type { On, SessionRateLimit } from 'claude-code'
 const SURFACES = ['terminal', 'desktop'] as const
 const T0 = Date.parse('2026-10-09T12:00:00Z')
 const at = (ms: number) => new Date(T0 + ms).toISOString()
+const MINUTE = 60_000
+const HOUR = 60 * MINUTE
+const DAY = 24 * HOUR
 const HINT = { isDraft: false, isWorking: false, hint: '? for shortcuts' }
 
 // Stands in for the engine beneath the plugin. In a session `next(e)` answers the
@@ -72,8 +75,10 @@ describe('limits-meter', () => {
       expect((await ui.find({ type: 'Text', text: ' 23%' }))?.props.color).toBe('success')
       expect((await ui.find({ type: 'Text', text: ' 81%' }))?.props.color).toBe('error')
       expect(await ui.find({ type: 'Text', text: /12%/ })).toBeUndefined()
-      // 21 + 3 + 18 = 42 cells centred in 120 start at column 39, 37 past the indent.
-      expect(await marginOf(ui)).toBe(37)
+      // Only the session reading has a reset time, so only it counts down.
+      expect((await ui.findAll({ type: 'Text', text: /↻/ })).map(t => t.text)).toEqual([' ↻3:00'])
+      // 27 + 3 + 18 = 48 cells centred in 120 start at column 36, 34 past the indent.
+      expect(await marginOf(ui)).toBe(34)
 
       await ui.unmount()
     }
@@ -147,6 +152,127 @@ describe('reset times', () => {
     expect((await ui.find({ type: 'Text', text: '  0%' }))?.props.color).toBe('success')
     expect(await ui.find({ type: 'Text', text: ' 30%' })).toBeDefined()
     await ui.unmount()
+  })
+})
+
+describe('countdowns', () => {
+  const countdowns = async (ui: Awaited<ReturnType<typeof mountHint>>) =>
+    (await ui.findAll({ type: 'Text', text: /↻/ })).map(t => t.text)
+
+  test('each window shows the time left until its reset, dim, after its percentage', async ($, on) => {
+    engineBeneath(on)
+    await measure($, [
+      { kind: 'five_hour', percentUsed: 38, resetsAt: at(2 * HOUR + 31 * MINUTE) },
+      { kind: 'seven_day', percentUsed: 82, resetsAt: at(3 * DAY + 4 * HOUR + 20 * MINUTE) },
+    ])
+
+    for (const surface of SURFACES) {
+      const ui = await mountHint($, surface, 120)
+      expect((await ui.find({ type: 'Text', text: ' ↻2:31' }))?.props.dimColor).toBe(true)
+      expect((await ui.find({ type: 'Text', text: ' ↻3d 4h ' }))?.props.dimColor).toBe(true)
+      // The README's screenshot: 27 + 3 + 26 = 56 cells centred in 120 start at column 32,
+      // 30 past the indent.
+      expect(await marginOf(ui)).toBe(30)
+      await ui.unmount()
+    }
+  })
+
+  test('rounds up to the minute, and the week reads h:mm in its last day', async ($, on) => {
+    engineBeneath(on)
+    const ui = await mountHint($, 'terminal', 120)
+
+    await measure($, [
+      { kind: 'five_hour', percentUsed: 99, resetsAt: at(30_000) },
+      { kind: 'seven_day', percentUsed: 90, resetsAt: at(17 * HOUR + 5 * MINUTE) },
+    ])
+    expect(await countdowns(ui)).toEqual([' ↻0:01', ' ↻17:05 '])
+
+    await measure($, [
+      { kind: 'five_hour', percentUsed: 1, resetsAt: at(5 * HOUR) },
+      { kind: 'seven_day', percentUsed: 1, resetsAt: at(6 * DAY + 23 * HOUR + 59 * MINUTE + 1) },
+    ])
+    expect(await countdowns(ui)).toEqual([' ↻5:00', ' ↻7d 0h '])
+
+    await measure($, [{ kind: 'seven_day', percentUsed: 50, resetsAt: at(DAY - 1) }])
+    expect(await countdowns(ui)).toEqual([' ↻1d 0h '])
+    await ui.unmount()
+  })
+
+  test('counts down each minute with no response, and the row stays in place', async ($, on) => {
+    const { clock } = engineBeneath(on)
+    await startSession($)
+    await measure($, [
+      { kind: 'five_hour', percentUsed: 40, resetsAt: at(2 * HOUR + 31 * MINUTE) },
+      { kind: 'seven_day', percentUsed: 20, resetsAt: at(3 * DAY + 10 * HOUR) },
+    ])
+
+    const ui = await mountHint($, 'terminal', 120)
+    expect(await countdowns(ui)).toEqual([' ↻2:31', ' ↻3d 10h'])
+    const margin = await marginOf(ui)
+
+    await clock.advance(MINUTE)
+    expect(await countdowns(ui)).toEqual([' ↻2:30', ' ↻3d 9h '])
+    expect(await marginOf(ui)).toBe(margin)
+
+    await clock.advance(30 * MINUTE)
+    expect(await countdowns(ui)).toEqual([' ↻2:00', ' ↻3d 9h '])
+    await ui.unmount()
+  })
+
+  test('the minute checks keep to the minute when the session starts partway through one', async ($, on) => {
+    const { clock } = engineBeneath(on)
+    await clock.advance(25_000)
+    await startSession($)
+    await measure($, [{ kind: 'five_hour', percentUsed: 40, resetsAt: at(HOUR) }])
+
+    const ui = await mountHint($, 'terminal', 120)
+    expect(await countdowns(ui)).toEqual([' ↻1:00'])
+
+    // The first check comes at the next whole minute, not a minute after the start.
+    await clock.advance(35_000)
+    expect(await countdowns(ui)).toEqual([' ↻0:59'])
+    await clock.advance(MINUTE)
+    expect(await countdowns(ui)).toEqual([' ↻0:58'])
+    await ui.unmount()
+  })
+
+  test('a countdown goes when its window resets and comes back with the next reading', async ($, on) => {
+    const { clock } = engineBeneath(on)
+    await startSession($)
+    await measure($, [{ kind: 'five_hour', percentUsed: 100, resetsAt: at(90_000) }])
+
+    const ui = await mountHint($, 'terminal', 120)
+    expect(await countdowns(ui)).toEqual([' ↻0:02'])
+
+    await clock.advance(2 * MINUTE)
+    expect(await ui.find({ type: 'Text', text: '  0%' })).toBeDefined()
+    expect(await countdowns(ui)).toEqual([])
+
+    await measure($, [{ kind: 'five_hour', percentUsed: 1, resetsAt: new Date(clock.now() + 5 * HOUR).toISOString() }])
+    expect(await countdowns(ui)).toEqual([' ↻5:00'])
+    await ui.unmount()
+  })
+
+  test('on a narrow terminal the countdowns go before the bars do', async ($, on) => {
+    engineBeneath(on)
+    await measure($, [
+      { kind: 'five_hour', percentUsed: 40, resetsAt: at(2 * HOUR) },
+      { kind: 'seven_day', percentUsed: 60, resetsAt: at(2 * DAY) },
+    ])
+
+    for (const surface of SURFACES) {
+      // Full needs 56 cells, short labels with countdowns 43, without them 29.
+      const medium = await mountHint($, surface, 50)
+      expect(await medium.find({ type: 'Text', text: '5h ' })).toBeDefined()
+      expect(await countdowns(medium)).toEqual([' ↻2:00', ' ↻2d 0h '])
+      await medium.unmount()
+
+      const narrow = await mountHint($, surface, 40)
+      expect(await countdowns(narrow)).toEqual([])
+      expect(await narrow.find({ type: 'Text', text: /█/ })).toBeDefined()
+      expect(await narrow.find({ type: 'Text', text: ' 40%' })).toBeDefined()
+      await narrow.unmount()
+    }
   })
 })
 

@@ -1,4 +1,4 @@
 {
   "hooks": ["command.run{command=limits}", "session.end", "session.measure", "session.start", "ui.render{component=PromptHint}"],
-  "calls": ["$.clock.after", "$.clock.every", "$.clock.now", "$.command.register", "$.session.usage", "$.state.get", "$.state.set", "$.store.get", "$.store.set", "$.ui.resolve"]
+  "calls": ["$.clock.after", "$.clock.now", "$.command.register", "$.session.usage", "$.state.get", "$.state.set", "$.store.get", "$.store.set", "$.ui.resolve"]
 }

@@ -5,36 +5,48 @@ import type { Limit } from '../types'
 
 const limits = atom({ plugin: 'limits-meter', key: 'limits' } as const, [])
 const isHidden = atom({ plugin: 'limits-meter', key: 'isHidden' } as const, false)
+// The time the countdowns count from: the latest minute check or reading, 0 before one.
+const time = atom({ plugin: 'limits-meter', key: 'time' } as const, 0)
 
 // $.store key that keeps the shown/hidden choice across sessions.
 const HIDDEN_KEY = 'isHidden'
 
-// How often the meters check the engine's figures: an idle session gets no responses to
-// notice a reset by, and nothing else refills the state if it was emptied.
+// How often the meters check the engine's figures and the time: an idle session gets no
+// responses to notice a reset by, nothing else refills the state if it was emptied, and
+// the countdowns move on a minute.
 const CHECK_MS = 60_000
 
 // How long after /clear or /resume the state is filled in again. The engine empties it
 // within a few milliseconds of session.end.
 const REFILL_DELAY_MS = 250
 
+// `left` is the most cells a window's countdown takes: "5:00" and "6d 23h". Each one is
+// padded to it, so the centred row doesn't shift as the countdowns tick over.
 const WINDOWS = [
-  { kind: 'five_hour', label: 'Session', short: '5h' },
-  { kind: 'seven_day', label: 'Week', short: '7d' },
+  { kind: 'five_hour', label: 'Session', short: '5h', left: 4 },
+  { kind: 'seven_day', label: 'Week', short: '7d', left: 6 },
 ] as const
 
 const EIGHTHS = ['', '▏', '▎', '▍', '▌', '▋', '▊', '▉']
 const SEPARATOR = '   '
+// Marks a countdown as the time until the window starts again, not a time of day.
+const RESET_MARK = '↻'
 const TRACK = 'subtle'
 // The hint line's rows start two columns in from the terminal's edge.
 const INDENT = 2
 
-type Tier = { name: 'full' | 'compact' | 'minimal'; bar: number }
+type Tier = { labels: 'long' | 'short'; bar: number; countdowns: boolean }
 
+// From the most detailed down: the labels shorten first, then the countdowns go, then
+// the bars.
 const TIERS: Tier[] = [
-  { name: 'full', bar: 8 },
-  { name: 'compact', bar: 5 },
-  { name: 'minimal', bar: 0 },
+  { labels: 'long', bar: 8, countdowns: true },
+  { labels: 'short', bar: 5, countdowns: true },
+  { labels: 'short', bar: 5, countdowns: false },
+  { labels: 'short', bar: 0, countdowns: false },
 ]
+
+type Meter = { label: string; percent: number; countdown: string | undefined }
 
 const known = (list: readonly SessionRateLimit[]): Limit[] =>
   list
@@ -56,15 +68,29 @@ const colorFor = (percent: number) =>
 
 const percentText = (percent: number) => `${Math.round(percent)}%`.padStart(4)
 
-// Cells one meter takes: "label ", the bar and a space, then "nn%" padded to 4.
-const meterWidth = (tier: Tier, label: string) =>
-  label.length + 1 + (tier.bar > 0 ? tier.bar + 1 : 0) + 4
+// The time left until a reset, rounded up to the minute so that it never reads 0:00
+// before the reset: "2:31" under a day, "3d 4h" from a day on.
+const leftText = (ms: number) => {
+  const minutes = Math.ceil(ms / 60_000)
+  if (minutes < 24 * 60) {
+    return `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, '0')}`
+  }
 
-// The engine's latest figures, with any window past its reset time at 0%. Written only
-// when they differ from the state's, since a write redraws the meters.
+  return `${Math.floor(minutes / (24 * 60))}d ${Math.floor((minutes % (24 * 60)) / 60)}h`
+}
+
+// Cells one meter takes: "label ", the bar and a space, "nn%" padded to 4, then the
+// countdown with its space and mark.
+const meterWidth = (tier: Tier, meter: Meter) =>
+  meter.label.length + 1 + (tier.bar > 0 ? tier.bar + 1 : 0) + 4 + (meter.countdown?.length ?? 0)
+
+// The time, then the engine's latest figures with any window past its reset time at 0%.
+// The time is written every time, which moves the countdowns on; the figures only when
+// they differ from the state's, since a write redraws the meters.
 async function refresh($: EngineInterface) {
-  const { rateLimits } = await $.session.usage()
   const now = await $.clock.now()
+  await update($, time, () => now)
+  const { rateLimits } = await $.session.usage()
   const fresh = current(known(rateLimits), now)
   if (JSON.stringify(fresh) !== JSON.stringify(await read($, limits))) {
     await update($, limits, () => fresh)
@@ -85,6 +111,21 @@ async function fill($: EngineInterface) {
   } catch {
     // No reading yet; session.measure fills it in after the next response.
   }
+}
+
+// Runs the minute check at the start of each minute, so the countdowns turn over with the
+// clock's minutes. Each wait is measured from the time again, which keeps it on the minute,
+// and is set before the check runs, so a check that never finishes doesn't stop the next.
+async function checkOnTheMinute($: EngineInterface) {
+  const now = await $.clock.now().catch(() => 0)
+  $.clock.after(CHECK_MS - (now % CHECK_MS), async () => {
+    void checkOnTheMinute($)
+    try {
+      await refresh($)
+    } catch {
+      // The next check tries again.
+    }
+  })
 }
 
 // What `/limits <args>` asks for: show, hide, flip, or undefined for anything else.
@@ -109,14 +150,7 @@ export const register: Register = on => {
     }
 
     await fill($)
-
-    $.clock.every(CHECK_MS, async () => {
-      try {
-        await refresh($)
-      } catch {
-        // The next check tries again.
-      }
-    })
+    await checkOnTheMinute($)
 
     return next(e)
   })
@@ -134,6 +168,7 @@ export const register: Register = on => {
   on('session.measure', async ($, e, next) => {
     if (e.changed.includes('rateLimits')) {
       const now = await $.clock.now()
+      await update($, time, () => now)
       await update($, limits, () => current(known(e.rateLimits), now))
     }
 
@@ -181,10 +216,24 @@ export const register: Register = on => {
     }
 
     const list = await read($, limits)
-    const readings = WINDOWS.flatMap(w => {
-      const one = list.find(l => l.kind === w.kind)
+    if (list.length === 0) {
+      return engine
+    }
 
-      return one === undefined ? [] : [{ ...w, percent: one.percentUsed }]
+    // Read only when there are figures, so the minute's time redraws nothing otherwise.
+    const now = await read($, time)
+    const shown = current(list, now)
+    const readings = WINDOWS.flatMap(w => {
+      const one = shown.find(l => l.kind === w.kind)
+      if (one === undefined) {
+        return []
+      }
+
+      const left = one.resetsAt === undefined ? NaN : Date.parse(one.resetsAt) - now
+      const countdown =
+        now > 0 && left > 0 ? ` ${RESET_MARK}${leftText(left).padEnd(w.left)}` : undefined
+
+      return [{ ...w, percent: one.percentUsed, countdown }]
     })
 
     if (readings.length === 0) {
@@ -194,12 +243,13 @@ export const register: Register = on => {
     // The most detailed tier that fits between the indents.
     const columns = e.viewport?.columns ?? 80
     const layout = TIERS.map(tier => {
-      const meters = readings.map(r => ({
-        label: tier.name === 'full' ? r.label : r.short,
+      const meters: Meter[] = readings.map(r => ({
+        label: tier.labels === 'long' ? r.label : r.short,
         percent: r.percent,
+        countdown: tier.countdowns ? r.countdown : undefined,
       }))
       const width =
-        meters.reduce((sum, m) => sum + meterWidth(tier, m.label), 0) +
+        meters.reduce((sum, m) => sum + meterWidth(tier, m), 0) +
         SEPARATOR.length * (meters.length - 1)
 
       return { tier, meters, width }
@@ -245,6 +295,7 @@ export const register: Register = on => {
                 <Text color={colorFor(meter.percent)} bold>
                   {percentText(meter.percent)}
                 </Text>,
+                ...(meter.countdown !== undefined ? [<Text dimColor>{meter.countdown}</Text>] : []),
               ]}
             </Box>
           ))}
