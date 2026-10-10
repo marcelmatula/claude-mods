@@ -21,14 +21,14 @@ const say = (level, text) => {
   console.log(process.env.GITHUB_ACTIONS ? `::${level} title=${mod} capabilities::${text}` : `${level}: ${mod}: ${text}`)
 }
 
-// Splits "a, b{x=1,y=2}, c" on the commas outside braces.
+// Splits "a, b{x=1,y=2}, c (via f, g)" on the commas outside braces and parentheses.
 const splitList = list => {
   const items = []
   let depth = 0
   let current = ''
   for (const ch of list) {
-    if (ch === '{') depth += 1
-    if (ch === '}') depth -= 1
+    if (ch === '{' || ch === '(') depth += 1
+    if (ch === '}' || ch === ')') depth -= 1
     if (ch === ',' && depth === 0) {
       items.push(current.trim())
       current = ''
@@ -63,7 +63,8 @@ for (const note of (report.contents ?? []).flatMap(entry => entry.notes ?? [])) 
   const [, kind, list] = match
   seen[kind] = true
   if (/^nothing\b/.test(list.trim())) continue
-  // A call made through a helper function is reported as "$.x.y (via helper)".
+  // A call made through helper functions is reported as "$.x.y (via helper)" or
+  // "$.x.y (via one, other)".
   for (const item of splitList(list)) used[kind].add(item.replace(/ \(via [^)]*\)$/, ''))
 }
 
