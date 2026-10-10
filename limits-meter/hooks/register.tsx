@@ -1,15 +1,20 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, SessionRateLimit } from 'claude-code'
 
-import type { Limit } from '../types'
+import type { Limit, Reading } from '../types'
 
 const limits = atom({ plugin: 'limits-meter', key: 'limits' } as const, [])
 const isHidden = atom({ plugin: 'limits-meter', key: 'isHidden' } as const, false)
 // The time the countdowns count from: the latest minute check or reading, 0 before one.
 const time = atom({ plugin: 'limits-meter', key: 'time' } as const, 0)
+// When this session's own engine last brought figures, 0 before it has.
+const measuredAt = atom({ plugin: 'limits-meter', key: 'measuredAt' } as const, 0)
 
 // $.store key that keeps the shown/hidden choice across sessions.
 const HIDDEN_KEY = 'isHidden'
+// $.store key of the newest figures any session got, with when it got them. The limits are
+// the account's, but each session's engine learns them only from its own responses.
+const READING_KEY = 'reading'
 
 // How often the meters check the engine's figures and the time: an idle session gets no
 // responses to notice a reset by, nothing else refills the state if it was emptied, and
@@ -79,21 +84,107 @@ const leftText = (ms: number) => {
   return `${Math.floor(minutes / (24 * 60))}d ${Math.floor((minutes % (24 * 60)) / 60)}h`
 }
 
+// What the meters show at `now`: each known window's percentage and, while its reset is
+// still ahead, the time left until it.
+const readingsAt = (list: readonly Limit[], now: number) => {
+  const shown = current(list, now)
+
+  return WINDOWS.flatMap(w => {
+    const one = shown.find(l => l.kind === w.kind)
+    if (one === undefined) {
+      return []
+    }
+
+    const left = one.resetsAt === undefined ? NaN : Date.parse(one.resetsAt) - now
+
+    return [{ ...w, percent: one.percentUsed, untilReset: now > 0 && left > 0 ? leftText(left) : undefined }]
+  })
+}
+
+// The figures as one line of text: "Session 61% ↻0:42 · Week 75% ↻2d 21h".
+const statusText = (list: readonly Limit[], now: number) => {
+  const parts = readingsAt(list, now).map(
+    r => `${r.label} ${Math.round(r.percent)}%${r.untilReset === undefined ? '' : ` ${RESET_MARK}${r.untilReset}`}`,
+  )
+
+  return parts.length === 0 ? undefined : parts.join(' · ')
+}
+
 // Cells one meter takes: "label ", the bar and a space, "nn%" padded to 4, then the
 // countdown with its space and mark.
 const meterWidth = (tier: Tier, meter: Meter) =>
   meter.label.length + 1 + (tier.bar > 0 ? tier.bar + 1 : 0) + 4 + (meter.countdown?.length ?? 0)
 
-// The time, then the engine's latest figures with any window past its reset time at 0%.
-// The time is written every time, which moves the countdowns on; the figures only when
-// they differ from the state's, since a write redraws the meters.
+const isLimit = (one: unknown): one is Limit => {
+  if (typeof one !== 'object' || one === null) return false
+  const { kind, percentUsed, resetsAt } = one as Record<string, unknown>
+
+  return (
+    typeof kind === 'string' &&
+    typeof percentUsed === 'number' &&
+    (resetsAt === undefined || typeof resetsAt === 'string')
+  )
+}
+
+const isReading = (value: unknown): value is Reading => {
+  if (typeof value !== 'object' || value === null) return false
+  const { at, limits } = value as Record<string, unknown>
+
+  return typeof at === 'number' && Array.isArray(limits) && limits.every(isLimit)
+}
+
+// The reading a session saved last, or undefined when there is none the mod can read.
+async function savedReading($: EngineInterface): Promise<Reading | undefined> {
+  try {
+    const value = await $.store.get(READING_KEY)
+    return isReading(value) ? value : undefined
+  } catch {
+    return undefined
+  }
+}
+
+// The time, then the newest figures with any window past its reset time at 0%: the
+// engine's, or the reading another session saved when that is newer. The time is written
+// every time, which moves the countdowns on; the figures only when they differ from the
+// state's, since a write redraws the meters.
 async function refresh($: EngineInterface) {
   const now = await $.clock.now()
   await update($, time, () => now)
-  const { rateLimits } = await $.session.usage()
-  const fresh = current(known(rateLimits), now)
+  const usage = await $.session.usage()
+  const own = known(usage.rateLimits)
+  // Responses with no windows mean the session is off a subscription (on an API key), so
+  // the figures another session saved are not its limits.
+  const isOffSubscription = own.length === 0 && (usage.cost?.usd ?? 0) > 0
+  const saved = isOffSubscription ? undefined : await savedReading($)
+  const newest = saved !== undefined && saved.at > (await read($, measuredAt)) ? saved.limits : own
+  const fresh = current(newest, now)
   if (JSON.stringify(fresh) !== JSON.stringify(await read($, limits))) {
     await update($, limits, () => fresh)
+  }
+
+  await showStatus($)
+}
+
+// The text the status entry was last set to, so it is set again only when it changes.
+let statusShown: string | undefined
+
+// The desktop app draws no hint line, but it does draw a plugin's status entry, small in
+// the prompt's footer. So a session that draws on no terminal shows the figures there as
+// text, and a terminal session, which has the meter row, sets none.
+async function showStatus($: EngineInterface) {
+  try {
+    const surfaces = await $.session.surfaces()
+    const isOffTerminal = surfaces.length > 0 && !surfaces.includes('terminal')
+    const text =
+      isOffTerminal && !(await read($, isHidden))
+        ? statusText(await read($, limits), await read($, time))
+        : undefined
+    if (text !== statusShown) {
+      statusShown = text
+      $.ui.status(text)
+    }
+  } catch {
+    // The next minute check tries again.
   }
 }
 
@@ -109,7 +200,8 @@ async function fill($: EngineInterface) {
   try {
     await refresh($)
   } catch {
-    // No reading yet; session.measure fills it in after the next response.
+    // No reading yet, from this session or a saved one; session.measure fills it in
+    // after the next response.
   }
 }
 
@@ -168,8 +260,21 @@ export const register: Register = on => {
   on('session.measure', async ($, e, next) => {
     if (e.changed.includes('rateLimits')) {
       const now = await $.clock.now()
+      const reading = known(e.rateLimits)
       await update($, time, () => now)
-      await update($, limits, () => current(known(e.rateLimits), now))
+      await update($, measuredAt, () => now)
+      await update($, limits, () => current(reading, now))
+      await showStatus($)
+
+      // Saved for the other sessions, which pick it up at their next minute check. A
+      // reading with no windows (no subscription) would empty their meters.
+      if (reading.length > 0) {
+        try {
+          await $.store.set(READING_KEY, { at: now, limits: reading } satisfies Reading)
+        } catch {
+          // The other sessions keep the reading they have.
+        }
+      }
     }
 
     return next(e)
@@ -184,6 +289,7 @@ export const register: Register = on => {
     }
 
     await update($, isHidden, () => hide)
+    await showStatus($)
     try {
       await $.store.set(HIDDEN_KEY, hide)
     } catch {
@@ -222,19 +328,10 @@ export const register: Register = on => {
 
     // Read only when there are figures, so the minute's time redraws nothing otherwise.
     const now = await read($, time)
-    const shown = current(list, now)
-    const readings = WINDOWS.flatMap(w => {
-      const one = shown.find(l => l.kind === w.kind)
-      if (one === undefined) {
-        return []
-      }
-
-      const left = one.resetsAt === undefined ? NaN : Date.parse(one.resetsAt) - now
-      const countdown =
-        now > 0 && left > 0 ? ` ${RESET_MARK}${leftText(left).padEnd(w.left)}` : undefined
-
-      return [{ ...w, percent: one.percentUsed, countdown }]
-    })
+    const readings = readingsAt(list, now).map(r => ({
+      ...r,
+      countdown: r.untilReset === undefined ? undefined : ` ${RESET_MARK}${r.untilReset.padEnd(r.left)}`,
+    }))
 
     if (readings.length === 0) {
       return engine
