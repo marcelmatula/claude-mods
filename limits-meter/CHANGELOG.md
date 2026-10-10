@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.0
+
+- Each meter shows the time left until its window resets, dim, after its percentage: `↻2:31` (hours and minutes) for the session and `↻3d 4h` (days and hours) for the week, which reads hours and minutes in its last day. It counts down at the start of every minute without waiting for a response, and rounds up, so it never reads `0:00` before the reset. Each countdown keeps the same width, so the centred row doesn't shift as it ticks over.
+- On a narrow terminal the countdowns go after the labels shorten and before the bars do.
+- The minute check now runs at the start of each minute instead of a minute after the session started.
+- Access: nothing new. The minute check uses `$.clock.after` alone, so `$.clock.every` is gone from `capabilities.json` and the README. The mod's session state holds one more value, the time the countdowns count from.
+
+Upgrade: nothing to do.
+
 ## 0.2.1
 
 - Fix: a window whose reset time passes while the session sits idle no longer stays at its old figure (say 100%) until the next response. The mod checks once a minute and drops it to 0%, and a reading that arrives already past its reset time shows 0% too.
