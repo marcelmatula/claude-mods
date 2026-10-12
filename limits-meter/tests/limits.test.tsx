@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
-import type { On, SessionRateLimit } from 'claude-code'
+import type { On, SessionRateLimit, UsageUnit } from 'claude-code'
 
 const SURFACES = ['terminal', 'desktop'] as const
 const T0 = Date.parse('2026-10-09T12:00:00Z')
@@ -45,12 +45,12 @@ const startSession = ($: Engine) =>
 const measure = ($: Engine, rateLimits: SessionRateLimit[]) =>
   $.session.measure({ context: { window: 200_000 }, rateLimits, changed: ['rateLimits'] })
 
-const mountHint = ($: Engine, surface: (typeof SURFACES)[number], columns: number) =>
+const mountHint = ($: Engine, surface: (typeof SURFACES)[number], columns: number, props = HINT) =>
   $.ui.mount({
     plugin: 'limits-meter',
     surface,
     component: 'PromptHint',
-    props: HINT,
+    props,
     viewport: { columns, rows: 40 },
   })
 
@@ -618,5 +618,271 @@ describe('/limits', () => {
     expect((await runLimits($, 'on')).text).toMatch(/^Limits meter shown, but there are no usage figures yet/)
     await measure($, READINGS)
     expect((await runLimits($, 'on')).text).toBe('Limits meter shown.')
+  })
+})
+
+// A response of the main thread ended: the context window moved and has a reading. Given
+// windows, they moved too unless `changed` says only the context did; a measurement carries
+// the windows either way.
+const respond = (
+  $: Engine,
+  rateLimits: SessionRateLimit[] = [],
+  changed: UsageUnit[] = rateLimits.length > 0 ? ['context', 'rateLimits'] : ['context'],
+) => $.session.measure({ context: { window: 200_000, tokens: 50_000, percent: 25 }, rateLimits, changed })
+
+// A compaction moves the context window too, but leaves it with no reading.
+const compact = ($: Engine) =>
+  $.session.measure({ context: { window: 200_000 }, rateLimits: [], changed: ['context'] })
+
+// The prompt cache is warm for a while after each response. Claude Code doesn't say how long
+// the account's cache lasts, so the `cacheTtl` option does: 5 minutes unless it says 1h.
+describe('prompt cache', () => {
+  const FIGURES: SessionRateLimit[] = [
+    { kind: 'five_hour', percentUsed: 61, resetsAt: at(42 * MINUTE) },
+    { kind: 'seven_day', percentUsed: 75, resetsAt: at(2 * DAY + 21 * HOUR) },
+  ]
+
+  test('shows nothing until the session has had a response', async ($, on) => {
+    engineBeneath(on)
+    await startSession($)
+    // A window moved, with no response of this session's behind it.
+    await measure($, [{ kind: 'five_hour', percentUsed: 40, resetsAt: at(HOUR) }])
+
+    const ui = await mountHint($, 'terminal', 120)
+    expect(await ui.find({ type: 'Text', text: ' 40%' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'Cache ' })).toBeUndefined()
+    await ui.unmount()
+  })
+
+  test('a response makes it warm, with the time left, after the windows', async ($, on) => {
+    engineBeneath(on)
+    await respond($, [
+      { kind: 'five_hour', percentUsed: 38, resetsAt: at(2 * HOUR + 31 * MINUTE) },
+      { kind: 'seven_day', percentUsed: 82, resetsAt: at(3 * DAY + 4 * HOUR + 20 * MINUTE) },
+    ])
+
+    for (const surface of SURFACES) {
+      const ui = await mountHint($, surface, 120)
+      expect(await ui.find({ type: 'Text', text: 'Cache ' })).toBeDefined()
+      expect((await ui.find({ type: 'Text', text: 'warm' }))?.props.color).toBe('success')
+      expect((await ui.find({ type: 'Text', text: ' ↓5m' }))?.props.dimColor).toBe(true)
+      // 27 + 3 + 26 + 3 + 23 = 82 cells centred in 120 start at column 19, 17 past the indent.
+      expect(await marginOf(ui)).toBe(17)
+      await ui.unmount()
+    }
+  })
+
+  test('counts down each minute, and its colour goes from green to red as it empties', async ($, on) => {
+    const { clock } = engineBeneath(on)
+    await startSession($)
+    await respond($)
+
+    const ui = await mountHint($, 'terminal', 120)
+    for (const [countdown, color] of [
+      [' ↓5m', 'success'],
+      [' ↓4m', 'success'],
+      [' ↓3m', 'success'],
+      [' ↓2m', 'warning'],
+      [' ↓1m', 'error'],
+    ]) {
+      expect((await ui.find({ type: 'Text', text: 'warm' }))?.props.color).toBe(color)
+      expect(await ui.find({ type: 'Text', text: countdown })).toBeDefined()
+      await clock.advance(MINUTE)
+    }
+
+    expect((await ui.find({ type: 'Text', text: 'cold' }))?.props.dimColor).toBe(true)
+    await ui.unmount()
+  })
+
+  test('goes cold the moment it lapses, not at the next minute check', async ($, on) => {
+    const { clock } = engineBeneath(on)
+    await clock.advance(20_000)
+    await startSession($)
+    // Used at 12:00:20, so cold from 12:05:20; the minute checks come at 12:05:00 and 12:06:00.
+    await respond($)
+
+    const ui = await mountHint($, 'terminal', 120)
+    await clock.advance(5 * MINUTE - 10_000)
+    expect(await ui.find({ type: 'Text', text: 'warm' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: ' ↓1m' })).toBeDefined()
+
+    await clock.advance(15_000)
+    expect(await ui.find({ type: 'Text', text: 'warm' })).toBeUndefined()
+    expect((await ui.find({ type: 'Text', text: 'cold' }))?.props.dimColor).toBe(true)
+    expect(await ui.find({ type: 'Text', text: /↓/ })).toBeUndefined()
+    await ui.unmount()
+  })
+
+  test('a later response starts the time over, and the lapse moves with it', async ($, on) => {
+    const { clock } = engineBeneath(on)
+    await clock.advance(20_000)
+    await startSession($)
+    await respond($)
+
+    const ui = await mountHint($, 'terminal', 120)
+    await clock.advance(4 * MINUTE)
+    await respond($)
+    expect(await ui.find({ type: 'Text', text: ' ↓5m' })).toBeDefined()
+
+    // The first response's lapse (12:05:20) has passed, the second's (12:09:20) has not. At
+    // the 12:06:00 check 3 minutes 20 seconds are left, which reads as 4.
+    await clock.advance(2 * MINUTE)
+    expect(await ui.find({ type: 'Text', text: ' ↓4m' })).toBeDefined()
+    await clock.advance(2 * MINUTE + 50_000)
+    expect(await ui.find({ type: 'Text', text: ' ↓1m' })).toBeDefined()
+
+    // 12:09:25, before the minute check at 12:10:00.
+    await clock.advance(15_000)
+    expect(await ui.find({ type: 'Text', text: 'cold' })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('lasts an hour when the cacheTtl option says 1h, and the row keeps its width', { options: { cacheTtl: '1h' } }, async ($, on) => {
+    const { clock } = engineBeneath(on)
+    await startSession($)
+    await respond($)
+
+    const ui = await mountHint($, 'terminal', 120)
+    expect(await ui.find({ type: 'Text', text: ' ↓60m' })).toBeDefined()
+    const margin = await marginOf(ui)
+
+    await clock.advance(30 * MINUTE)
+    expect(await ui.find({ type: 'Text', text: ' ↓30m' })).toBeDefined()
+
+    await clock.advance(21 * MINUTE)
+    expect(await ui.find({ type: 'Text', text: ' ↓9m ' })).toBeDefined()
+    expect(await marginOf(ui)).toBe(margin)
+
+    await clock.advance(9 * MINUTE)
+    expect(await ui.find({ type: 'Text', text: 'cold' })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('a running turn keeps it warm, with no time to count', async ($, on) => {
+    const { clock } = engineBeneath(on)
+    await startSession($)
+    await respond($)
+    await clock.advance(10 * MINUTE)
+
+    const idle = await mountHint($, 'terminal', 120)
+    expect(await idle.find({ type: 'Text', text: 'cold' })).toBeDefined()
+    await idle.unmount()
+
+    // Every request of the turn uses the cache, so a turn longer than its lifetime is no
+    // reason to call it cold.
+    const busy = await mountHint($, 'terminal', 120, { ...HINT, isWorking: true })
+    expect((await busy.find({ type: 'Text', text: 'warm' }))?.props.color).toBe('success')
+    expect(await busy.find({ type: 'Text', text: /↓/ })).toBeUndefined()
+    await busy.unmount()
+  })
+
+  test('a compaction leaves the old prompt behind, and the next response starts it again', async ($, on) => {
+    engineBeneath(on)
+    await startSession($)
+    await respond($)
+
+    const ui = await mountHint($, 'terminal', 120)
+    expect(await ui.find({ type: 'Text', text: 'warm' })).toBeDefined()
+
+    await compact($)
+    expect(await ui.drawn()).toEqual({ type: 'engine', ref: 0 })
+
+    await respond($)
+    expect(await ui.find({ type: 'Text', text: 'warm' })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('a session with no usage windows still shows it', async ($, on) => {
+    engineBeneath(on)
+    await respond($)
+
+    const ui = await mountHint($, 'terminal', 120)
+    expect(await ui.find({ type: 'Text', text: 'Cache ' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /%/ })).toBeUndefined()
+    // 23 cells centred in 120 start at column 48, 46 past the indent.
+    expect(await marginOf(ui)).toBe(46)
+    await ui.unmount()
+  })
+
+  test("is the session's own: nothing of it goes to the other sessions", async ($, on) => {
+    engineBeneath(on)
+    const saved: Record<string, unknown> = {}
+    storeBeneath(on, saved)
+    await startSession($)
+
+    await respond($, [{ kind: 'five_hour', percentUsed: 40 }])
+    expect(Object.keys(saved)).toEqual(['reading'])
+    expect(saved.reading).toEqual({ at: T0, limits: [{ kind: 'five_hour', percentUsed: 40 }] })
+  })
+
+  test('on a narrow terminal it stays while the short labels fit it, and goes before the countdowns do', async ($, on) => {
+    engineBeneath(on)
+    await respond($, [
+      { kind: 'five_hour', percentUsed: 40, resetsAt: at(2 * HOUR) },
+      { kind: 'seven_day', percentUsed: 60, resetsAt: at(2 * DAY) },
+    ])
+
+    // The full row needs 82 cells, short labels with the cache 66, the full windows alone
+    // 56, short labels without the cache 43.
+    const full = await mountHint($, 'terminal', 86)
+    expect(await full.find({ type: 'Text', text: 'Session ' })).toBeDefined()
+    expect(await full.find({ type: 'Text', text: 'Cache ' })).toBeDefined()
+    await full.unmount()
+
+    for (const columns of [85, 70]) {
+      const short = await mountHint($, 'terminal', columns)
+      expect(await short.find({ type: 'Text', text: '5h ' })).toBeDefined()
+      expect(await short.find({ type: 'Text', text: 'Cache ' })).toBeDefined()
+      await short.unmount()
+    }
+
+    // The row as it was without the cache: the windows with their full labels.
+    for (const columns of [69, 60]) {
+      const windows = await mountHint($, 'terminal', columns)
+      expect(await windows.find({ type: 'Text', text: 'Session ' })).toBeDefined()
+      expect(await windows.find({ type: 'Text', text: 'Cache ' })).toBeUndefined()
+      await windows.unmount()
+    }
+
+    const narrow = await mountHint($, 'terminal', 59)
+    expect(await narrow.find({ type: 'Text', text: '5h ' })).toBeDefined()
+    expect(await narrow.find({ type: 'Text', text: 'Cache ' })).toBeUndefined()
+    expect((await narrow.findAll({ type: 'Text', text: /↻/ })).map(t => t.text)).toEqual([' ↻2:00', ' ↻2d 0h '])
+    await narrow.unmount()
+  })
+
+  test('/limits hides it with the rest of the row', async ($, on) => {
+    engineBeneath(on)
+    storeBeneath(on, {})
+    await respond($, FIGURES)
+
+    const ui = await mountHint($, 'terminal', 120)
+    expect(await ui.find({ type: 'Text', text: 'warm' })).toBeDefined()
+
+    await runLimits($, 'off')
+    expect(await ui.drawn()).toEqual({ type: 'engine', ref: 0 })
+    await runLimits($, 'on')
+    expect(await ui.find({ type: 'Text', text: 'warm' })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('the desktop status entry says it too, in one entry per response', async ($, on) => {
+    const { clock } = engineBeneath(on)
+    storeBeneath(on, {})
+    const statuses = statusBeneath(on, ['desktop'])
+    await startSession($)
+
+    await respond($, FIGURES)
+    expect(statuses).toEqual(['Session 61% ↻0:42 · Week 75% ↻2d 21h · Cache warm ↓5m'])
+
+    await clock.advance(MINUTE)
+    expect(statuses.at(-1)).toBe('Session 61% ↻0:41 · Week 75% ↻2d 20h · Cache warm ↓4m')
+
+    await clock.advance(4 * MINUTE)
+    expect(statuses.at(-1)).toBe('Session 61% ↻0:37 · Week 75% ↻2d 20h · Cache cold')
+
+    // A response that moved no window moves only the context window.
+    await respond($, FIGURES, ['context'])
+    expect(statuses.at(-1)).toBe('Session 61% ↻0:37 · Week 75% ↻2d 20h · Cache warm ↓5m')
   })
 })

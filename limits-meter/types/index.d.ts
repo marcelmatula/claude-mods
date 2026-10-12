@@ -5,6 +5,6 @@ export type Reading = { at: number; limits: Limit[] }
 
 declare module 'claude-code' {
   interface PluginState {
-    'limits-meter': { limits: Limit[]; isHidden: boolean; time: number; measuredAt: number }
+    'limits-meter': { limits: Limit[]; isHidden: boolean; time: number; measuredAt: number; cachedAt: number }
   }
 }

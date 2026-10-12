@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.0
+
+- New: whether the session's prompt cache is still warm, and for how long. A third item on the row after the two windows, `Cache █████▋ warm ↓4m`: the bar empties as the cache cools, in the limits' colours turned round (green while more than half of its lifetime is left, yellow from half, red in the last fifth), and `↓4m` is the time left until it is cold. Once its lifetime has run out it reads `cold`, with an empty bar. It counts down at the start of every minute and rounds up, like the other countdowns, and goes cold at the moment its lifetime ends, not up to a minute later. In the desktop app the footer text gains `· Cache warm ↓4m`.
+- New option, `cacheTtl`: how long the account's prompt cache lasts, `5m` (the default) or `1h`. Claude Code doesn't tell a mod which applies, so the countdown counts down from this. Installing the mod asks for it; later it is a row in `/config`.
+- It is an estimate, counted from the end of the latest response. It shows nothing until the session's first response, and again after a compaction, `/clear` or `/resume`. While a turn is running the terminal row shows it as warm with no countdown, since every request of the turn uses it. It doesn't see a `/model` switch, which drops the cache too. Nothing about it is shared between sessions, as the cache belongs to one session's conversation.
+- A session on an API key, which has no rate-limit windows, now keeps a row with the cache alone, where before its row went after its first response.
+- On a narrow terminal the cache item goes below about 70 columns, after the labels have shortened; the windows then keep the row they had before it.
+- Access: nothing new. The cache is read from `session.measure`, which the windows already use, and the end of its lifetime is marked with `$.clock.after`. `capabilities.json` is unchanged; the README's "What it can access" section says what the mod reads for it. The session state holds one more value, when the cache was last used.
+
+Upgrade: install asks for the cache lifetime; an existing install uses `5m` until you change `cacheTtl` in `/config`. If your account has the hour-long cache, set it to `1h`.
+
 ## 0.4.1
 
 - Fix: in a desktop app session that was running when the mod was updated, `/limits` went missing until a new session. The minute check now adds it again whenever the session no longer lists it. Should a load of the mod come without the session start that normally follows it, its first reading adds `/limits` and starts the minute check.
