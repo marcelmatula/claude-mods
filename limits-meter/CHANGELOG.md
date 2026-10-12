@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.1
+
+- Each percentage now sits one cell from its bar and one space from its countdown, `38% ↻2:31`, as `warm ↓4m` does. It was padded on the left to keep its width, which left two cells between bar and figure (three below 10 %). What a shorter figure lacks now goes at the end of its meter, after the countdown, so the row keeps its width and doesn't shift when a figure gains a digit.
+
+Upgrade: nothing to do.
+
 ## 0.5.0
 
 - New: whether the session's prompt cache is still warm, and for how long. A third item on the row after the two windows, `Cache █████▋ warm ↓4m`: the bar empties as the cache cools, in the limits' colours turned round (green while more than half of its lifetime is left, yellow from half, red in the last fifth), and `↓4m` is the time left until it is cold. Once its lifetime has run out it reads `cold`, with an empty bar. It counts down at the start of every minute and rounds up, like the other countdowns, and goes cold at the moment its lifetime ends, not up to a minute later. In the desktop app the footer text gains `· Cache warm ↓4m`.
