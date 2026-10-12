@@ -9,6 +9,9 @@ const isHidden = atom({ plugin: 'limits-meter', key: 'isHidden' } as const, fals
 const time = atom({ plugin: 'limits-meter', key: 'time' } as const, 0)
 // When this session's own engine last brought figures, 0 before it has.
 const measuredAt = atom({ plugin: 'limits-meter', key: 'measuredAt' } as const, 0)
+// When this session's prompt cache was last used: the end of its latest response, 0 before
+// one. Unlike the limits it is not shared, the cache belonging to the session's own prompt.
+const cachedAt = atom({ plugin: 'limits-meter', key: 'cachedAt' } as const, 0)
 
 // $.store key that keeps the shown/hidden choice across sessions.
 const HIDDEN_KEY = 'isHidden'
@@ -32,6 +35,16 @@ const WINDOWS = [
   { kind: 'seven_day', label: 'Week', short: '7d', left: 6 },
 ] as const
 
+const MINUTE_MS = 60_000
+
+// How long the prompt cache stays warm after it is used. Claude Code does not tell a mod
+// which applies to the account, so the `cacheTtl` option says.
+const CACHE_TTLS = { '5m': 5 * MINUTE_MS, '1h': 60 * MINUTE_MS } as const
+const CACHE_LABEL = 'Cache'
+// The cache gets colder from the moment it is used, and a countdown to that is not a
+// reset: this marks the time left until it is cold, not until a window starts again.
+const CACHE_MARK = '↓'
+
 const EIGHTHS = ['', '▏', '▎', '▍', '▌', '▋', '▊', '▉']
 const SEPARATOR = '   '
 // Marks a countdown as the time until the window starts again, not a time of day.
@@ -40,18 +53,36 @@ const TRACK = 'subtle'
 // The hint line's rows start two columns in from the terminal's edge.
 const INDENT = 2
 
-type Tier = { labels: 'long' | 'short'; bar: number; countdowns: boolean }
+type Tier = { labels: 'long' | 'short'; bar: number; countdowns: boolean; cache: boolean }
 
-// From the most detailed down: the labels shorten first, then the countdowns go, then
-// the bars.
+// From the most detailed down; the first that fits is drawn. The tiers without the cache
+// are the row as it was before the cache came, so a row too narrow for the cache keeps
+// whatever the windows alone could. The cache stays as long as the short labels let it fit,
+// which is longer than the long labels would, and goes before the countdowns do.
 const TIERS: Tier[] = [
-  { labels: 'long', bar: 8, countdowns: true },
-  { labels: 'short', bar: 5, countdowns: true },
-  { labels: 'short', bar: 5, countdowns: false },
-  { labels: 'short', bar: 0, countdowns: false },
+  { labels: 'long', bar: 8, countdowns: true, cache: true },
+  { labels: 'short', bar: 5, countdowns: true, cache: true },
+  { labels: 'long', bar: 8, countdowns: true, cache: false },
+  { labels: 'short', bar: 5, countdowns: true, cache: false },
+  { labels: 'short', bar: 5, countdowns: false, cache: false },
+  { labels: 'short', bar: 0, countdowns: false, cache: false },
 ]
 
-type Meter = { label: string; percent: number; countdown: string | undefined }
+// One item of the row, whatever it measures. `fill` is how much of the bar is filled, as
+// a percentage; `value` is the 4 cells after the bar, a percentage or a word.
+type Meter = {
+  label: string
+  fill: number
+  color: string
+  value: string
+  isDim: boolean
+  countdown: string | undefined
+}
+
+// The prompt cache as of some moment: warm with the percentage of its lifetime left and,
+// while the time is running, the time left; or cold. Absent before the session's first
+// response.
+type Cache = { isWarm: boolean; remaining: number; untilCold: string | undefined }
 
 const known = (list: readonly SessionRateLimit[]): Limit[] =>
   list
@@ -101,17 +132,77 @@ const readingsAt = (list: readonly Limit[], now: number) => {
   })
 }
 
-// The figures as one line of text: "Session 61% ↻0:42 · Week 75% ↻2d 21h".
-const statusText = (list: readonly Limit[], now: number) => {
+// The cache's lifetime, which the `cacheTtl` option sets when the module loads.
+let cacheMs: number = CACHE_TTLS['5m']
+
+// The time left until the cache is cold, rounded up to the minute like the windows'
+// countdowns: "4m", and "60m" on the hour's lifetime.
+const cacheLeftText = (ms: number) => `${Math.ceil(ms / MINUTE_MS)}m`
+
+// Most cells that text takes, which the countdown is padded to.
+const cacheLeftWidth = () => `${cacheMs / MINUTE_MS}m`.length
+
+// The cache as of `now`, given when it was last used. A turn that is running keeps it warm
+// with every request it makes, so while one is, there is no time to count down. Absent
+// before the session's first response, and wherever the time is not known.
+const cacheAt = (touched: number, now: number, isWorking: boolean): Cache | undefined => {
+  if (touched === 0 || now === 0) {
+    return undefined
+  }
+
+  if (isWorking) {
+    return { isWarm: true, remaining: 100, untilCold: undefined }
+  }
+
+  const left = touched + cacheMs - now
+
+  return left > 0
+    ? { isWarm: true, remaining: Math.min(100, (left * 100) / cacheMs), untilCold: cacheLeftText(left) }
+    : { isWarm: false, remaining: 0, untilCold: undefined }
+}
+
+// The figures as one line of text: "Session 61% ↻0:42 · Week 75% ↻2d 21h · Cache warm ↓4m".
+const statusText = (list: readonly Limit[], now: number, touched: number) => {
   const parts = readingsAt(list, now).map(
     r => `${r.label} ${Math.round(r.percent)}%${r.untilReset === undefined ? '' : ` ${RESET_MARK}${r.untilReset}`}`,
   )
+  const cache = cacheAt(touched, now, false)
+  if (cache !== undefined) {
+    parts.push(
+      `${CACHE_LABEL} ${cache.isWarm ? 'warm' : 'cold'}${cache.untilCold === undefined ? '' : ` ${CACHE_MARK}${cache.untilCold}`}`,
+    )
+  }
 
   return parts.length === 0 ? undefined : parts.join(' · ')
 }
 
-// Cells one meter takes: "label ", the bar and a space, "nn%" padded to 4, then the
-// countdown with its space and mark.
+// The meters a tier draws for the windows' readings.
+const windowMeter = (r: ReturnType<typeof readingsAt>[number], tier: Tier): Meter => ({
+  label: tier.labels === 'long' ? r.label : r.short,
+  fill: r.percent,
+  color: colorFor(r.percent),
+  value: percentText(r.percent),
+  isDim: false,
+  countdown:
+    tier.countdowns && r.untilReset !== undefined ? ` ${RESET_MARK}${r.untilReset.padEnd(r.left)}` : undefined,
+})
+
+// The cache as a meter: a bar that empties as the cache cools, in the limits' colours turned
+// round (green with most of the lifetime left), and "warm" or "cold" where their percentage is.
+const cacheMeter = (cache: Cache, tier: Tier): Meter => ({
+  label: CACHE_LABEL,
+  fill: cache.remaining,
+  color: colorFor(100 - cache.remaining),
+  value: cache.isWarm ? 'warm' : 'cold',
+  isDim: !cache.isWarm,
+  countdown:
+    tier.countdowns && cache.untilCold !== undefined
+      ? ` ${CACHE_MARK}${cache.untilCold.padEnd(cacheLeftWidth())}`
+      : undefined,
+})
+
+// Cells one meter takes: "label ", the bar and a space, "nn%" or a word padded to 4, then
+// the countdown with its space and mark.
 const meterWidth = (tier: Tier, meter: Meter) =>
   meter.label.length + 1 + (tier.bar > 0 ? tier.bar + 1 : 0) + 4 + (meter.countdown?.length ?? 0)
 
@@ -177,7 +268,7 @@ async function showStatus($: EngineInterface) {
     const isOffTerminal = surfaces.length > 0 && !surfaces.includes('terminal')
     const text =
       isOffTerminal && !(await read($, isHidden))
-        ? statusText(await read($, limits), await read($, time))
+        ? statusText(await read($, limits), await read($, time), await read($, cachedAt))
         : undefined
     if (text !== statusShown) {
       statusShown = text
@@ -220,6 +311,55 @@ async function checkOnTheMinute($: EngineInterface) {
 
     await keepCommand($)
   })
+}
+
+// Whether a timer is waiting for the cache to go cold. The minute check would show it up to
+// a minute late, so one timer waits for the moment itself. A response in the meantime moves
+// that moment later, and the timer, finding it so, waits again: one is enough.
+let isWatchingCache = false
+
+function watchCache($: EngineInterface, wait: number) {
+  if (isWatchingCache) {
+    return
+  }
+
+  isWatchingCache = true
+  $.clock.after(wait, async () => {
+    isWatchingCache = false
+    try {
+      const touched = await read($, cachedAt)
+      const now = await $.clock.now()
+      if (touched === 0) {
+        return
+      }
+
+      const left = touched + cacheMs - now
+      if (left > 0) {
+        watchCache($, left)
+        return
+      }
+
+      await update($, time, () => now)
+      await showStatus($)
+    } catch {
+      // The next minute check shows it.
+    }
+  })
+}
+
+// A response ended: the cache was used just before, so its time starts over. Anything else
+// that moves the context window without a response (a compaction, which leaves the window
+// with no reading) starts a different prompt, which the old cache does not serve.
+async function useCache($: EngineInterface, hasResponse: boolean) {
+  if (!hasResponse) {
+    await update($, cachedAt, () => 0)
+    return
+  }
+
+  const now = await $.clock.now()
+  await update($, time, () => now)
+  await update($, cachedAt, () => now)
+  watchCache($, cacheMs)
 }
 
 // Whether this load of the module runs the minute check. session.start starts it, and
@@ -266,7 +406,9 @@ const wanted = (args: string, hidden: boolean): boolean | undefined => {
   return undefined
 }
 
-export const register: Register = on => {
+export const register: Register = (on, options) => {
+  cacheMs = CACHE_TTLS[options.cacheTtl === '1h' ? '1h' : '5m']
+
   on('session.start', async ($, e, next) => {
     await registerCommand($)
     await fill($)
@@ -291,6 +433,12 @@ export const register: Register = on => {
       await startChecking($)
     }
 
+    // The window's fill moves with every response, and has no reading yet after a compaction.
+    const isContextMoved = e.changed.includes('context')
+    if (isContextMoved) {
+      await useCache($, e.context.tokens !== undefined)
+    }
+
     if (e.changed.includes('rateLimits')) {
       const now = await $.clock.now()
       const reading = known(e.rateLimits)
@@ -308,6 +456,8 @@ export const register: Register = on => {
           // The other sessions keep the reading they have.
         }
       }
+    } else if (isContextMoved) {
+      await showStatus($)
     }
 
     return next(e)
@@ -355,35 +505,34 @@ export const register: Register = on => {
     }
 
     const list = await read($, limits)
-    if (list.length === 0) {
+    const touched = await read($, cachedAt)
+    if (list.length === 0 && touched === 0) {
       return engine
     }
 
-    // Read only when there are figures, so the minute's time redraws nothing otherwise.
+    // Read only when there are figures or a cache, so the minute's time redraws nothing
+    // otherwise.
     const now = await read($, time)
-    const readings = readingsAt(list, now).map(r => ({
-      ...r,
-      countdown: r.untilReset === undefined ? undefined : ` ${RESET_MARK}${r.untilReset.padEnd(r.left)}`,
-    }))
+    const windows = readingsAt(list, now)
+    const cache = cacheAt(touched, now, e.props.isWorking)
 
-    if (readings.length === 0) {
+    if (windows.length === 0 && cache === undefined) {
       return engine
     }
 
     // The most detailed tier that fits between the indents.
     const columns = e.viewport?.columns ?? 80
     const layout = TIERS.map(tier => {
-      const meters: Meter[] = readings.map(r => ({
-        label: tier.labels === 'long' ? r.label : r.short,
-        percent: r.percent,
-        countdown: tier.countdowns ? r.countdown : undefined,
-      }))
+      const meters: Meter[] = [
+        ...windows.map(r => windowMeter(r, tier)),
+        ...(tier.cache && cache !== undefined ? [cacheMeter(cache, tier)] : []),
+      ]
       const width =
         meters.reduce((sum, m) => sum + meterWidth(tier, m), 0) +
         SEPARATOR.length * (meters.length - 1)
 
       return { tier, meters, width }
-    }).find(l => l.width <= columns - 2 * INDENT)
+    }).find(l => l.meters.length > 0 && l.width <= columns - 2 * INDENT)
 
     if (layout === undefined) {
       return engine
@@ -391,12 +540,11 @@ export const register: Register = on => {
 
     const { Box, Text } = $.ui.resolve(e)
 
-    const bar = (percent: number, cells: number) => {
+    const bar = (percent: number, cells: number, color: string) => {
       const eighths = Math.round((Math.min(100, Math.max(0, percent)) / 100) * cells * 8)
       const full = Math.floor(eighths / 8)
       const partial = EIGHTHS[eighths % 8] ?? ''
       const empty = cells - full - (partial === '' ? 0 : 1)
-      const color = colorFor(percent)
 
       return (
         <Box flexDirection="row" marginRight={1}>
@@ -421,10 +569,14 @@ export const register: Register = on => {
               {[
                 ...(index > 0 ? [<Text dimColor>{SEPARATOR}</Text>] : []),
                 <Text dimColor>{`${meter.label} `}</Text>,
-                ...(layout.tier.bar > 0 ? [bar(meter.percent, layout.tier.bar)] : []),
-                <Text color={colorFor(meter.percent)} bold>
-                  {percentText(meter.percent)}
-                </Text>,
+                ...(layout.tier.bar > 0 ? [bar(meter.fill, layout.tier.bar, meter.color)] : []),
+                meter.isDim ? (
+                  <Text dimColor>{meter.value}</Text>
+                ) : (
+                  <Text color={meter.color} bold>
+                    {meter.value}
+                  </Text>
+                ),
                 ...(meter.countdown !== undefined ? [<Text dimColor>{meter.countdown}</Text>] : []),
               ]}
             </Box>

@@ -1,10 +1,19 @@
 {
   "name": "limits-meter",
-  "version": "0.4.1",
-  "description": "Session (5 h) and weekly usage limits as small progress bars with reset countdowns, centred under the prompt; /limits hides or shows them",
+  "version": "0.5.0",
+  "description": "Session (5 h) and weekly usage limits as small progress bars with reset countdowns, plus whether the prompt cache is still warm and for how long, centred under the prompt; /limits hides or shows them",
   "author": {
     "name": "Marcel"
   },
   "license": "MIT",
-  "types": "./types/index.d.ts"
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "cacheTtl": {
+      "type": "string",
+      "title": "Prompt cache lifetime",
+      "description": "How long the prompt cache stays warm after a response: 5m (the API's default) or 1h (an hour, which some accounts get). Claude Code doesn't tell mods which applies, so the cache countdown counts down from this.",
+      "default": "5m",
+      "options": ["5m", "1h"]
+    }
+  }
 }
