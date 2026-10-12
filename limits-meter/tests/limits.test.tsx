@@ -82,8 +82,8 @@ describe('limits-meter', () => {
 
       expect(await ui.find({ type: 'Text', text: 'Session ' })).toBeDefined()
       expect(await ui.find({ type: 'Text', text: 'Week ' })).toBeDefined()
-      expect((await ui.find({ type: 'Text', text: ' 23%' }))?.props.color).toBe('success')
-      expect((await ui.find({ type: 'Text', text: ' 81%' }))?.props.color).toBe('error')
+      expect((await ui.find({ type: 'Text', text: '23%' }))?.props.color).toBe('success')
+      expect((await ui.find({ type: 'Text', text: '81%' }))?.props.color).toBe('error')
       expect(await ui.find({ type: 'Text', text: /12%/ })).toBeUndefined()
       // Only the session reading has a reset time, so only it counts down.
       expect((await ui.findAll({ type: 'Text', text: /↻/ })).map(t => t.text)).toEqual([' ↻3:00'])
@@ -102,7 +102,7 @@ describe('limits-meter', () => {
       expect(await ui.find({ type: 'Text', text: /%/ })).toBeUndefined()
 
       await measure($, [{ kind: 'five_hour', percentUsed: 60 }])
-      expect((await ui.find({ type: 'Text', text: ' 60%' }))?.props.color).toBe('warning')
+      expect((await ui.find({ type: 'Text', text: '60%' }))?.props.color).toBe('warning')
 
       await ui.unmount()
       await measure($, [])
@@ -144,8 +144,8 @@ describe('reset times', () => {
 
       await clock.advance(120_000)
       expect(await ui.find({ type: 'Text', text: '100%' })).toBeUndefined()
-      expect((await ui.find({ type: 'Text', text: '  0%' }))?.props.color).toBe('success')
-      expect((await ui.find({ type: 'Text', text: ' 64%' }))?.props.color).toBe('warning')
+      expect((await ui.find({ type: 'Text', text: '0%' }))?.props.color).toBe('success')
+      expect((await ui.find({ type: 'Text', text: '64%' }))?.props.color).toBe('warning')
 
       await ui.unmount()
     }
@@ -159,8 +159,8 @@ describe('reset times', () => {
     ])
 
     const ui = await mountHint($, 'terminal', 120)
-    expect((await ui.find({ type: 'Text', text: '  0%' }))?.props.color).toBe('success')
-    expect(await ui.find({ type: 'Text', text: ' 30%' })).toBeDefined()
+    expect((await ui.find({ type: 'Text', text: '0%' }))?.props.color).toBe('success')
+    expect(await ui.find({ type: 'Text', text: '30%' })).toBeDefined()
     await ui.unmount()
   })
 })
@@ -185,6 +185,32 @@ describe('countdowns', () => {
       expect(await marginOf(ui)).toBe(30)
       await ui.unmount()
     }
+  })
+
+  test('a percentage is followed by one space and its countdown, and the row stays put as it gains a digit', async ($, on) => {
+    engineBeneath(on)
+    await measure($, [
+      { kind: 'five_hour', percentUsed: 5, resetsAt: at(2 * HOUR) },
+      { kind: 'seven_day', percentUsed: 38, resetsAt: at(3 * DAY + 4 * HOUR) },
+    ])
+
+    const ui = await mountHint($, 'terminal', 120)
+    // A value's texts in order: itself, its countdown, then what it lacks of 4 cells.
+    const after = async (value: string) => {
+      const texts = (await ui.findAll({ type: 'Text' })).map(t => t.text)
+      return texts.slice(texts.indexOf(value), texts.indexOf(value) + 3)
+    }
+    expect(await after('5%')).toEqual(['5%', ' ↻2:00', '  '])
+    expect(await after('38%')).toEqual(['38%', ' ↻3d 4h ', ' '])
+    const margin = await marginOf(ui)
+
+    await measure($, [
+      { kind: 'five_hour', percentUsed: 50, resetsAt: at(2 * HOUR) },
+      { kind: 'seven_day', percentUsed: 38, resetsAt: at(3 * DAY + 4 * HOUR) },
+    ])
+    expect(await after('50%')).toEqual(['50%', ' ↻2:00', ' '])
+    expect(await marginOf(ui)).toBe(margin)
+    await ui.unmount()
   })
 
   test('rounds up to the minute, and the week reads h:mm in its last day', async ($, on) => {
@@ -255,7 +281,7 @@ describe('countdowns', () => {
     expect(await countdowns(ui)).toEqual([' ↻0:02'])
 
     await clock.advance(2 * MINUTE)
-    expect(await ui.find({ type: 'Text', text: '  0%' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '0%' })).toBeDefined()
     expect(await countdowns(ui)).toEqual([])
 
     await measure($, [{ kind: 'five_hour', percentUsed: 1, resetsAt: new Date(clock.now() + 5 * HOUR).toISOString() }])
@@ -280,7 +306,7 @@ describe('countdowns', () => {
       const narrow = await mountHint($, surface, 40)
       expect(await countdowns(narrow)).toEqual([])
       expect(await narrow.find({ type: 'Text', text: /█/ })).toBeDefined()
-      expect(await narrow.find({ type: 'Text', text: ' 40%' })).toBeDefined()
+      expect(await narrow.find({ type: 'Text', text: '40%' })).toBeDefined()
       await narrow.unmount()
     }
   })
@@ -309,15 +335,15 @@ describe('other sessions', () => {
     await measure($, [{ kind: 'five_hour', percentUsed: 61, resetsAt: at(HOUR) }])
 
     const ui = await mountHint($, 'terminal', 120)
-    expect(await ui.find({ type: 'Text', text: ' 61%' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '61%' })).toBeDefined()
 
     // Forty minutes later another session's response saves a newer reading.
     await clock.advance(40 * MINUTE)
     saved.reading = { at: clock.now(), limits: [{ kind: 'five_hour', percentUsed: 91, resetsAt: at(HOUR) }] }
-    expect(await ui.find({ type: 'Text', text: ' 61%' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '61%' })).toBeDefined()
 
     await clock.advance(MINUTE)
-    expect((await ui.find({ type: 'Text', text: ' 91%' }))?.props.color).toBe('error')
+    expect((await ui.find({ type: 'Text', text: '91%' }))?.props.color).toBe('error')
     expect(await ui.find({ type: 'Text', text: ' ↻0:19' })).toBeDefined()
     await ui.unmount()
   })
@@ -333,8 +359,8 @@ describe('other sessions', () => {
 
     const ui = await mountHint($, 'terminal', 120)
     await clock.advance(MINUTE)
-    expect(await ui.find({ type: 'Text', text: ' 75%' })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: ' 70%' })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: '75%' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '70%' })).toBeUndefined()
     await ui.unmount()
   })
 
@@ -346,7 +372,7 @@ describe('other sessions', () => {
     await startSession($)
 
     const ui = await mountHint($, 'terminal', 120)
-    expect(await ui.find({ type: 'Text', text: ' 40%' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '40%' })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: ' ↻2:00' })).toBeDefined()
     await ui.unmount()
   })
@@ -357,7 +383,7 @@ describe('other sessions', () => {
     await startSession($)
 
     const ui = await mountHint($, 'terminal', 120)
-    expect(await ui.find({ type: 'Text', text: ' 40%' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '40%' })).toBeDefined()
 
     // A response came and was priced, and it carried no rate-limit windows.
     engine.cost = { usd: 0.02 }
@@ -373,7 +399,7 @@ describe('other sessions', () => {
     await startSession($)
 
     const ui = await mountHint($, 'terminal', 120)
-    expect(await ui.find({ type: 'Text', text: ' 30%' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '30%' })).toBeDefined()
     await ui.unmount()
   })
 })
@@ -502,13 +528,13 @@ describe('/clear and /resume', () => {
       await measure($, [{ kind: 'five_hour', percentUsed: 40 }])
 
       const ui = await mountHint($, 'terminal', 120)
-      expect(await ui.find({ type: 'Text', text: ' 40%' })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: '40%' })).toBeDefined()
 
       // A later response moved the window less than a whole point, so no measurement came.
       engine.rateLimits = [{ kind: 'five_hour', percentUsed: 40.6 }]
       await endSession($, reason)
       await engine.clock.advance(1_000)
-      expect(await ui.find({ type: 'Text', text: ' 41%' })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: '41%' })).toBeDefined()
       await ui.unmount()
     })
   }
@@ -534,7 +560,7 @@ describe('/clear and /resume', () => {
 
     engine.rateLimits = [{ kind: 'seven_day', percentUsed: 30 }]
     await engine.clock.advance(60_000)
-    expect(await ui.find({ type: 'Text', text: ' 30%' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '30%' })).toBeDefined()
     await ui.unmount()
   })
 })
@@ -566,7 +592,7 @@ describe('/limits', () => {
 
     for (const surface of SURFACES) {
       const ui = await mountHint($, surface, 120)
-      expect(await ui.find({ type: 'Text', text: ' 40%' })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: '40%' })).toBeDefined()
 
       expect((await runLimits($, 'off')).text).toBe('Limits meter hidden. /limits brings it back.')
       expect(saved.isHidden).toBe(true)
@@ -574,7 +600,7 @@ describe('/limits', () => {
 
       expect((await runLimits($, ' ON ')).text).toBe('Limits meter shown.')
       expect(saved.isHidden).toBe(false)
-      expect(await ui.find({ type: 'Text', text: ' 40%' })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: '40%' })).toBeDefined()
 
       await ui.unmount()
     }
@@ -596,7 +622,7 @@ describe('/limits', () => {
 
     await runLimits($, '')
     expect(saved.isHidden).toBe(false)
-    expect(await ui.find({ type: 'Text', text: ' 40%' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '40%' })).toBeDefined()
     await ui.unmount()
   })
 
@@ -649,7 +675,7 @@ describe('prompt cache', () => {
     await measure($, [{ kind: 'five_hour', percentUsed: 40, resetsAt: at(HOUR) }])
 
     const ui = await mountHint($, 'terminal', 120)
-    expect(await ui.find({ type: 'Text', text: ' 40%' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '40%' })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: 'Cache ' })).toBeUndefined()
     await ui.unmount()
   })

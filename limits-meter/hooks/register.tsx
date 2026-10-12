@@ -69,7 +69,7 @@ const TIERS: Tier[] = [
 ]
 
 // One item of the row, whatever it measures. `fill` is how much of the bar is filled, as
-// a percentage; `value` is the 4 cells after the bar, a percentage or a word.
+// a percentage; `value` is what follows the bar, a percentage or a word, in up to 4 cells.
 type Meter = {
   label: string
   fill: number
@@ -102,7 +102,13 @@ const current = (list: readonly Limit[], now: number): Limit[] =>
 const colorFor = (percent: number) =>
   percent >= 80 ? 'error' : percent >= 50 ? 'warning' : 'success'
 
-const percentText = (percent: number) => `${Math.round(percent)}%`.padStart(4)
+const percentText = (percent: number) => `${Math.round(percent)}%`
+
+// Each value counts as 4 cells. What a shorter one lacks goes at the end of its meter, so
+// it sits one cell from its bar and one space from its countdown whatever its digits, and
+// the row keeps its width.
+const VALUE_CELLS = 4
+const valuePad = (meter: Meter) => ' '.repeat(Math.max(0, VALUE_CELLS - meter.value.length))
 
 // The time left until a reset, rounded up to the minute so that it never reads 0:00
 // before the reset: "2:31" under a day, "3d 4h" from a day on.
@@ -201,10 +207,10 @@ const cacheMeter = (cache: Cache, tier: Tier): Meter => ({
       : undefined,
 })
 
-// Cells one meter takes: "label ", the bar and a space, "nn%" or a word padded to 4, then
-// the countdown with its space and mark.
+// Cells one meter takes: "label ", the bar and a space, the value in its 4 cells, then the
+// countdown with its space and mark.
 const meterWidth = (tier: Tier, meter: Meter) =>
-  meter.label.length + 1 + (tier.bar > 0 ? tier.bar + 1 : 0) + 4 + (meter.countdown?.length ?? 0)
+  meter.label.length + 1 + (tier.bar > 0 ? tier.bar + 1 : 0) + VALUE_CELLS + (meter.countdown?.length ?? 0)
 
 const isLimit = (one: unknown): one is Limit => {
   if (typeof one !== 'object' || one === null) return false
@@ -578,6 +584,7 @@ export const register: Register = (on, options) => {
                   </Text>
                 ),
                 ...(meter.countdown !== undefined ? [<Text dimColor>{meter.countdown}</Text>] : []),
+                ...(valuePad(meter) !== '' ? [<Text>{valuePad(meter)}</Text>] : []),
               ]}
             </Box>
           ))}
