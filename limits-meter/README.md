@@ -100,7 +100,7 @@ They work as the row does: the same countdowns, moved on every minute, and `/lim
 
 ## What it can access
 
-A mod runs inside Claude Code's plugin sandbox and can reach the outside only through `$` calls. On Claude Code 2.1.294 the sandbox has no `fetch`, `require`, `process` or `eval`, and the validator refuses disguised `$` access, so its list of hooks and calls covers everything a mod can do. For limits-meter that list is:
+A mod runs inside Claude Code's plugin sandbox and can reach the outside only through `$` calls. On Claude Code 2.1.294 the sandbox gives a mod no way to make web requests, load modules, reach the process or run code from a string, and the validator refuses disguised `$` access, so its list of hooks and calls covers everything a mod can do. For limits-meter that list is:
 
 | Hooks | When they run |
 | --- | --- |
