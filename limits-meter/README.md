@@ -4,9 +4,9 @@ A Claude Code mod that shows your usage limits for the current session (5 h) and
 
 Part of [claude-mods](../README.md), Marcel's Claude Code marketplace (`marcel-mods`).
 
-![limits-meter under the Claude Code prompt: Session 38 % in green, resetting in 2:31, Week 82 % in red, resetting in 3 days 4 hours, and the prompt cache warm for about 4 more minutes, centred on the row below the hint line](docs/screenshot.svg)
+![limits-meter under the Claude Code prompt: the session's name, flaky-test-fix, in bold, then Session 38 % in green, resetting in 2:31, Week 82 % in red, resetting in 3 days 4 hours, and the prompt cache warm for about 4 more minutes, centred on the row below the hint line](docs/screenshot.svg)
 
-Each bar is green below 50 %, yellow from 50 % and red from 80 %, in your theme's colours. The screenshot is the mod running in a 120-column terminal with sample readings.
+Each bar is green below 50 %, yellow from 50 % and red from 80 %, in your theme's colours. The screenshot is the mod running in a 120-column terminal with sample readings, in a session named `flaky-test-fix`.
 
 After each percentage, `↻` and a dim countdown give the time left until that window resets:
 
