@@ -1,7 +1,7 @@
 {
   "name": "limits-meter",
-  "version": "0.5.1",
-  "description": "Session (5 h) and weekly usage limits as small progress bars with reset countdowns, plus whether the prompt cache is still warm and for how long, centred under the prompt; /limits hides or shows them",
+  "version": "0.6.0",
+  "description": "Session (5 h) and weekly usage limits as small progress bars with reset countdowns, plus whether the prompt cache is still warm and for how long and the session's name, centred under the prompt; /limits hides or shows them",
   "author": {
     "name": "Marcel"
   },
