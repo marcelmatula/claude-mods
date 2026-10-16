@@ -912,3 +912,191 @@ describe('prompt cache', () => {
     expect(statuses.at(-1)).toBe('Session 61% ↻0:37 · Week 75% ↻2d 20h · Cache warm ↓5m')
   })
 })
+
+// Claude Code hands a mod the session's name only through these two settings hook events:
+// the session's start, and each prompt. A session with no name gets none.
+const named = (name: string | undefined) => (name === undefined ? {} : { session_title: name })
+
+const startNamed = ($: Engine, name: string | undefined, source: 'startup' | 'clear' | 'resume' = 'startup') =>
+  $.classic.SessionStart({ source, ...named(name) })
+
+const prompt = ($: Engine, name: string | undefined) =>
+  $.classic.UserPromptSubmit({ prompt: 'go on', ...named(name) })
+
+// The settings hooks beneath the plugin, none configured: a record of each event that
+// reaches them.
+const settingsHooksBeneath = (on: On) => {
+  const seen: unknown[] = []
+  on('classic.SessionStart', ($, e) => (seen.push(e), {}))
+  on('classic.UserPromptSubmit', ($, e) => (seen.push(e), {}))
+  return seen
+}
+
+// The plugin's state beneath it, which a test can empty as /clear and /resume do.
+const stateBeneath = (on: On) => {
+  const values = new Map<string, { value: unknown; version: number }>()
+  on('state.get', ($, e) => ({ value: values.get(e.key) ?? { value: undefined, version: 0 } }))
+  on('state.set', ($, e) => {
+    const version = (values.get(e.key)?.version ?? 0) + 1
+    values.set(e.key, { value: e.value, version })
+    return { value: { isSet: true as const, version } }
+  })
+  return { empty: () => values.clear() }
+}
+
+const textsOf = async (ui: Awaited<ReturnType<typeof mountHint>>) =>
+  (await ui.findAll({ type: 'Text' })).map(t => t.text)
+
+describe("the session's name", () => {
+  test('leads the row, bold, set off from the meters', async ($, on) => {
+    engineBeneath(on)
+    settingsHooksBeneath(on)
+    await startSession($)
+    await startNamed($, 'limits work')
+    await measure($, [
+      { kind: 'five_hour', percentUsed: 23.4, resetsAt: at(3 * HOUR) },
+      { kind: 'seven_day', percentUsed: 81 },
+    ])
+
+    for (const surface of SURFACES) {
+      const ui = await mountHint($, surface, 120)
+      expect((await ui.find({ type: 'Text', text: 'limits work' }))?.props.bold).toBe(true)
+      expect((await textsOf(ui)).slice(0, 3)).toEqual(['limits work', '   ', 'Session '])
+      // 11 + 3 + 48 = 62 cells centred in 120 start at column 29, 27 past the indent.
+      expect(await marginOf(ui)).toBe(27)
+      await ui.unmount()
+    }
+  })
+
+  test('shows alone before there are any figures', async ($, on) => {
+    engineBeneath(on)
+    settingsHooksBeneath(on)
+    await prompt($, 'demo')
+
+    for (const surface of SURFACES) {
+      const ui = await mountHint($, surface, 120)
+      expect(await textsOf(ui)).toEqual(['demo'])
+      // 4 cells centred in 120 start at column 58, 56 past the indent.
+      expect(await marginOf(ui)).toBe(56)
+      await ui.unmount()
+    }
+  })
+
+  test('follows a /rename with the next prompt, and goes when the session has no name', async ($, on) => {
+    engineBeneath(on)
+    settingsHooksBeneath(on)
+    await startNamed($, undefined)
+    const ui = await mountHint($, 'terminal', 120)
+    expect(await ui.drawn()).toEqual({ type: 'engine', ref: 0 })
+
+    await prompt($, 'first')
+    expect(await ui.find({ type: 'Text', text: 'first' })).toBeDefined()
+
+    await prompt($, 'second')
+    expect(await ui.find({ type: 'Text', text: 'second' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'first' })).toBeUndefined()
+
+    await prompt($, undefined)
+    expect(await ui.drawn()).toEqual({ type: 'engine', ref: 0 })
+    await ui.unmount()
+  })
+
+  test('passes both events on as they came', async ($, on) => {
+    engineBeneath(on)
+    const seen = settingsHooksBeneath(on)
+
+    await startNamed($, 'kept')
+    await prompt($, 'kept')
+    expect(seen).toMatchObject([
+      { hook_event_name: 'SessionStart', source: 'startup', session_title: 'kept' },
+      { hook_event_name: 'UserPromptSubmit', prompt: 'go on', session_title: 'kept' },
+    ])
+  })
+
+  test('a long name is cut to 24 cells, and shorter on a narrow terminal before the meters shorten', async ($, on) => {
+    engineBeneath(on)
+    settingsHooksBeneath(on)
+    await prompt($, 'refactor the usage meter row for narrow terminals')
+    await measure($, READINGS)
+
+    // The meters need 42 cells with their full labels and 29 with the short ones.
+    const wide = await mountHint($, 'terminal', 120)
+    expect((await textsOf(wide)).slice(0, 3)).toEqual(['refactor the usage mete…', '   ', 'Session '])
+    await wide.unmount()
+
+    const cut = await mountHint($, 'terminal', 60)
+    expect((await textsOf(cut)).slice(0, 3)).toEqual(['refactor t…', '   ', 'Session '])
+    expect(await marginOf(cut)).toBe(0)
+    await cut.unmount()
+
+    const short = await mountHint($, 'terminal', 52)
+    expect((await textsOf(short)).slice(0, 3)).toEqual(['refactor the us…', '   ', '5h '])
+    await short.unmount()
+
+    // Too narrow for 8 cells of it beside any meters with bars: the row as it was without it.
+    const narrow = await mountHint($, 'terminal', 36)
+    expect((await textsOf(narrow))[0]).toBe('5h ')
+    expect(await narrow.find({ type: 'Text', text: /refactor/ })).toBeUndefined()
+    await narrow.unmount()
+  })
+
+  test('/limits hides it with the rest of the row', async ($, on) => {
+    engineBeneath(on)
+    settingsHooksBeneath(on)
+    storeBeneath(on, {})
+    await prompt($, 'demo')
+
+    const ui = await mountHint($, 'terminal', 120)
+    await runLimits($, 'off')
+    expect(await ui.drawn()).toEqual({ type: 'engine', ref: 0 })
+    await runLimits($, 'on')
+    expect(await ui.find({ type: 'Text', text: 'demo' })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('the desktop status entry leaves it out', async ($, on) => {
+    engineBeneath(on)
+    settingsHooksBeneath(on)
+    const statuses = statusBeneath(on, ['desktop'])
+    await prompt($, 'demo')
+    await measure($, [{ kind: 'five_hour', percentUsed: 61, resetsAt: at(42 * MINUTE) }])
+    expect(statuses).toEqual(['Session 61% ↻0:42'])
+  })
+
+  // /clear and /resume empty the state a few milliseconds after session.end; the
+  // SessionStart that names the next session can come before that or after.
+  for (const order of ['before', 'after'] as const) {
+    test(`after /resume it shows the resumed session's name, its SessionStart ${order} the state empties`, async ($, on) => {
+      const engine = engineBeneath(on)
+      settingsHooksBeneath(on)
+      const state = stateBeneath(on)
+      await startSession($)
+      await startNamed($, 'old')
+
+      await endSession($, 'resume')
+      if (order === 'after') state.empty()
+      await startNamed($, 'resumed', 'resume')
+      if (order === 'before') state.empty()
+      await engine.clock.advance(1_000)
+
+      const ui = await mountHint($, 'terminal', 120)
+      expect(await textsOf(ui)).toEqual(['resumed'])
+      await ui.unmount()
+    })
+  }
+
+  test('after /clear into a session with no name it goes', async ($, on) => {
+    const engine = engineBeneath(on)
+    settingsHooksBeneath(on)
+    await startSession($)
+    await startNamed($, 'old')
+
+    await endSession($, 'clear')
+    await startNamed($, undefined, 'clear')
+    await engine.clock.advance(1_000)
+
+    const ui = await mountHint($, 'terminal', 120)
+    expect(await ui.drawn()).toEqual({ type: 'engine', ref: 0 })
+    await ui.unmount()
+  })
+})

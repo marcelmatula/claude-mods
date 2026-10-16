@@ -12,6 +12,8 @@ const measuredAt = atom({ plugin: 'limits-meter', key: 'measuredAt' } as const, 
 // When this session's prompt cache was last used: the end of its latest response, 0 before
 // one. Unlike the limits it is not shared, the cache belonging to the session's own prompt.
 const cachedAt = atom({ plugin: 'limits-meter', key: 'cachedAt' } as const, 0)
+// The session's name, as /rename or --name set it; '' while it has none.
+const sessionName = atom({ plugin: 'limits-meter', key: 'name' } as const, '')
 
 // $.store key that keeps the shown/hidden choice across sessions.
 const HIDDEN_KEY = 'isHidden'
@@ -52,6 +54,13 @@ const RESET_MARK = '↻'
 const TRACK = 'subtle'
 // The hint line's rows start two columns in from the terminal's edge.
 const INDENT = 2
+
+// The session's name leads the row, cut with an ellipsis to at most NAME_CELLS cells. On a
+// row too narrow for it, it gives up cells down to NAME_MIN_CELLS before the meters lose
+// detail, and goes only when no tier with bars leaves it that many.
+const NAME_CELLS = 24
+const NAME_MIN_CELLS = 8
+const ELLIPSIS = '…'
 
 type Tier = { labels: 'long' | 'short'; bar: number; countdowns: boolean; cache: boolean }
 
@@ -168,6 +177,7 @@ const cacheAt = (touched: number, now: number, isWorking: boolean): Cache | unde
 }
 
 // The figures as one line of text: "Session 61% ↻0:42 · Week 75% ↻2d 21h · Cache warm ↓4m".
+// It leaves out the session's name, which the desktop app shows itself.
 const statusText = (list: readonly Limit[], now: number, touched: number) => {
   const parts = readingsAt(list, now).map(
     r => `${r.label} ${Math.round(r.percent)}%${r.untilReset === undefined ? '' : ` ${RESET_MARK}${r.untilReset}`}`,
@@ -211,6 +221,14 @@ const cacheMeter = (cache: Cache, tier: Tier): Meter => ({
 // countdown with its space and mark.
 const meterWidth = (tier: Tier, meter: Meter) =>
   meter.label.length + 1 + (tier.bar > 0 ? tier.bar + 1 : 0) + VALUE_CELLS + (meter.countdown?.length ?? 0)
+
+// Cells a text takes, a character to a cell: a name in wide characters (CJK, emoji) takes
+// more than this says, which moves the row off centre.
+const cellsOf = (text: string) => [...text].length
+
+// The text in at most `cells` cells, cut with an ellipsis when it is longer.
+const clip = (text: string, cells: number) =>
+  cellsOf(text) <= cells ? text : `${[...text].slice(0, cells - 1).join('').trimEnd()}${ELLIPSIS}`
 
 const isLimit = (one: unknown): one is Limit => {
   if (typeof one !== 'object' || one === null) return false
@@ -285,13 +303,43 @@ async function showStatus($: EngineInterface) {
   }
 }
 
-// Fills the state a session starts from: the saved shown/hidden choice and the figures.
+// The name the classic hooks last brought to this load of the module, undefined before
+// they have. A reload starts it over while the state keeps the name it had.
+let nameSeen: string | undefined
+
+// Keeps the session's name as Claude Code handed it to a settings hook, no name included,
+// so a session that lost its name loses it from the row.
+async function nameSession($: EngineInterface, title: string | undefined) {
+  const name = title?.trim() ?? ''
+  nameSeen = name
+  try {
+    if (name !== (await read($, sessionName))) {
+      await update($, sessionName, () => name)
+    }
+  } catch {
+    // The next prompt brings it again.
+  }
+}
+
+// Fills the state a session starts from: the saved shown/hidden choice, the session's name
+// and the figures.
 async function fill($: EngineInterface) {
   try {
     const stored = await $.store.get(HIDDEN_KEY)
     await update($, isHidden, () => stored === true)
   } catch {
     // No stored choice: the meters show.
+  }
+
+  // /clear and /resume empty the state just after the SessionStart that names the session
+  // they start may have run, so the name it brought is written again.
+  const name = nameSeen
+  if (name !== undefined) {
+    try {
+      await update($, sessionName, () => name)
+    } catch {
+      // The next prompt brings it again.
+    }
   }
 
   try {
@@ -433,6 +481,19 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
+  // Claude Code tells a mod the session's name only through these two settings hook events:
+  // at the start (a --name, or the name of a session resumed), and with each prompt, which
+  // brings a /rename. Nothing else of either is read, and both go on as they came.
+  on('classic.SessionStart', async ($, e, next) => {
+    await nameSession($, e.session_title)
+    return next(e)
+  })
+
+  on('classic.UserPromptSubmit', async ($, e, next) => {
+    await nameSession($, e.session_title)
+    return next(e)
+  })
+
   on('session.measure', async ($, e, next) => {
     if (!isChecking) {
       await registerCommand($)
@@ -510,35 +571,46 @@ export const register: Register = (on, options) => {
       return engine
     }
 
+    const name = await read($, sessionName)
     const list = await read($, limits)
     const touched = await read($, cachedAt)
-    if (list.length === 0 && touched === 0) {
+    if (list.length === 0 && touched === 0 && name === '') {
       return engine
     }
 
     // Read only when there are figures or a cache, so the minute's time redraws nothing
     // otherwise.
-    const now = await read($, time)
+    const now = list.length === 0 && touched === 0 ? 0 : await read($, time)
     const windows = readingsAt(list, now)
     const cache = cacheAt(touched, now, e.props.isWorking)
 
-    if (windows.length === 0 && cache === undefined) {
+    if (windows.length === 0 && cache === undefined && name === '') {
       return engine
     }
 
-    // The most detailed tier that fits between the indents.
+    // The most detailed tier that fits between the indents: first the tiers with bars led
+    // by the name, then each tier as it was without it.
     const columns = e.viewport?.columns ?? 80
-    const layout = TIERS.map(tier => {
+    const room = columns - 2 * INDENT
+    const tiers = [
+      ...(name === '' ? [] : TIERS.filter(t => t.bar > 0).map(tier => ({ tier, hasName: true }))),
+      ...TIERS.map(tier => ({ tier, hasName: false })),
+    ]
+    const layout = tiers.map(({ tier, hasName }) => {
       const meters: Meter[] = [
         ...windows.map(r => windowMeter(r, tier)),
         ...(tier.cache && cache !== undefined ? [cacheMeter(cache, tier)] : []),
       ]
-      const width =
+      const metersWidth =
         meters.reduce((sum, m) => sum + meterWidth(tier, m), 0) +
-        SEPARATOR.length * (meters.length - 1)
+        SEPARATOR.length * Math.max(0, meters.length - 1)
+      const nameRoom = Math.min(NAME_CELLS, room - metersWidth - (meters.length > 0 ? SEPARATOR.length : 0))
+      const shownName =
+        hasName && nameRoom >= Math.min(cellsOf(name), NAME_MIN_CELLS) ? clip(name, nameRoom) : undefined
+      const nameWidth = shownName === undefined ? 0 : cellsOf(shownName) + (meters.length > 0 ? SEPARATOR.length : 0)
 
-      return { tier, meters, width }
-    }).find(l => l.meters.length > 0 && l.width <= columns - 2 * INDENT)
+      return { tier, meters, shownName, hasName, width: nameWidth + metersWidth }
+    }).find(l => (l.hasName ? l.shownName !== undefined : l.meters.length > 0) && l.width <= room)
 
     if (layout === undefined) {
       return engine
@@ -563,6 +635,15 @@ export const register: Register = (on, options) => {
       )
     }
 
+    // The session's name, bold, set off from the meters as they are from each other.
+    const lead =
+      layout.shownName === undefined
+        ? []
+        : [
+            <Text bold>{layout.shownName}</Text>,
+            ...(layout.meters.length > 0 ? [<Text dimColor>{SEPARATOR}</Text>] : []),
+          ]
+
     // The engine's line is a full-width row (hint left, notices right) that paints
     // over anything placed on it, and a Box around it may not size it. So it stays
     // as it is, and the meters take the row under it, centred on the terminal.
@@ -570,6 +651,7 @@ export const register: Register = (on, options) => {
       <Box flexDirection="column">
         {engine}
         <Box flexDirection="row" marginLeft={Math.max(0, Math.floor((columns - layout.width) / 2) - INDENT)}>
+          {lead}
           {layout.meters.map((meter, index) => (
             <Box flexDirection="row">
               {[

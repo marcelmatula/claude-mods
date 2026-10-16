@@ -6,7 +6,7 @@ Marcel's mods for Claude Code, in one plugin marketplace: `marcel-mods`.
 
 | Mod | What it does |
 | --- | --- |
-| [limits-meter](limits-meter) | Shows your session (5 h) and weekly usage limits as small progress bars under the prompt, with the time left until each resets, and whether the prompt cache is still warm. `/limits` hides or shows them. |
+| [limits-meter](limits-meter) | Shows your session (5 h) and weekly usage limits as small progress bars under the prompt, with the time left until each resets, whether the prompt cache is still warm, and the session's name once you give it one. `/limits` hides or shows them. |
 
 [![limits-meter under the Claude Code prompt: Session 38 % in green, resetting in 2:31, and Week 82 % in red, resetting in 3 days 4 hours, and the prompt cache warm for about 4 more minutes, on a centred row below the hint line](limits-meter/docs/screenshot.svg)](limits-meter)
 

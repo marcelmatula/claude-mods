@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.0
+
+- New: the session's name leads the row, in bold, once you have named the session with `/rename` or `claude --name`: `limits work   Session ███      38% ↻2:31   …`. Before the session has any figures, the name is the row on its own. A session you haven't named shows no name, as before: Claude Code doesn't tell a mod the title it gives a session by itself.
+- Claude Code tells a mod the name when a session starts and with each prompt, so the name shows from the start, or at the latest with your next prompt, and after `/rename` the row shows the new name with your next prompt. After `/clear` or `/resume` the row takes the name of the session that starts, or none, by your next prompt at the latest.
+- A name over 24 characters is cut short with `…`. On a narrow terminal it shortens further, down to 8 characters, before the meters lose detail, and goes when not even that fits beside the bars. With no name, the row is drawn exactly as in 0.5.1.
+- The desktop app's footer text leaves the name out, since the app shows the session's name itself. `/limits` hides the name with the rest of the row.
+- Access: two new hooks, declared in `capabilities.json` and the README's "What it can access" section. They are `classic.SessionStart` and `classic.UserPromptSubmit`, the settings hook events that carry the session's name. The `UserPromptSubmit` hook receives each prompt as any hook on that event does, but reads only the name, and passes every prompt on unchanged. The session state holds one more value, the name. Nothing about the name is saved to the store or shared between sessions.
+
+Upgrade: nothing to do. Name a session with `/rename <name>` to see it.
+
 ## 0.5.1
 
 - Each percentage now sits one cell from its bar and one space from its countdown, `38% ↻2:31`, as `warm ↓4m` does. It was padded on the left to keep its width, which left two cells between bar and figure (three below 10 %). What a shorter figure lacks now goes at the end of its meter, after the countdown, so the row keeps its width and doesn't shift when a figure gains a digit.
