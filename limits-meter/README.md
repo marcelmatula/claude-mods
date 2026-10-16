@@ -46,6 +46,7 @@ Once you name a session, with `/rename <name>` or by starting it with `claude --
 
 - It is the name you gave the session. Claude Code also titles a session by itself, but it doesn't tell a mod that title, so a session you haven't named shows no name.
 - Claude Code tells a mod the name only when a session starts and with each prompt you send. So a name the session starts with, from `--name` or a session you resume, shows from the start or at the latest with your first prompt, and after `/rename` the new name shows with your next prompt.
+- Where an organization manages Claude Code, the two hooks that bring the name run only for plugins the organization lists in its managed settings, so a limits-meter you install yourself shows no name there. The meters work as usual.
 - A name longer than 24 characters is cut short with `…`. On a narrower terminal it gets shorter still, down to 8 characters, before the meters lose any detail. When not even that fits beside the meters' bars, the row goes on without it.
 - It counts a character to a cell, so a name in wide characters, such as Chinese, Japanese or emoji, puts the row a little off centre.
 - Before the session has any figures, the name is the row on its own. `/limits` hides it with the rest of the row.
@@ -134,6 +135,12 @@ claude plugin validate limits-meter
 ```
 
 [`capabilities.json`](capabilities.json) holds the same list. CI fails if the mod's hooks or `$` calls ever go beyond it, so any new kind of access has to show up as a change to that file.
+
+## Privacy
+
+limits-meter collects nothing about you and sends nothing anywhere: it makes no network requests, and its author receives no data of any kind. The usage figures it shows come from Claude Code itself.
+
+On your computer it keeps two things in its own store, in your Claude Code configuration folder: whether you have hidden the row, and the newest usage figures (each window's percentage and reset time, and when they arrived). The session's name and when the prompt cache was last used stay in the session's state, not in that store, and are not shared with other sessions. It never reads the text of your prompts or of Claude's responses, your files or your token counts. [What it can access](#what-it-can-access) lists every hook and call it has.
 
 ## How it works
 

@@ -5,7 +5,13 @@
   "author": {
     "name": "Marcel"
   },
+  "homepage": "https://github.com/marcelmatula/claude-mods/tree/main/limits-meter",
+  "repository": "https://github.com/marcelmatula/claude-mods",
+  "documentationUrl": "https://github.com/marcelmatula/claude-mods/blob/main/limits-meter/README.md",
+  "supportUrl": "https://github.com/marcelmatula/claude-mods/issues",
+  "privacyPolicyUrl": "https://github.com/marcelmatula/claude-mods/blob/main/limits-meter/README.md#privacy",
   "license": "MIT",
+  "keywords": ["usage", "limits", "quota", "rate-limit", "prompt-cache", "status-bar", "session"],
   "types": "./types/index.d.ts",
   "userConfig": {
     "cacheTtl": {
