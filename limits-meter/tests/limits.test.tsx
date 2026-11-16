@@ -982,7 +982,7 @@ describe("the session's name", () => {
     }
   })
 
-  test('follows a /rename with the next prompt, and goes when the session has no name', async ($, on) => {
+  test('follows the name each prompt brings, and goes when the session has no name', async ($, on) => {
     engineBeneath(on)
     settingsHooksBeneath(on)
     await startNamed($, undefined)
@@ -1098,5 +1098,163 @@ describe("the session's name", () => {
     const ui = await mountHint($, 'terminal', 120)
     expect(await ui.drawn()).toEqual({ type: 'engine', ref: 0 })
     await ui.unmount()
+  })
+})
+
+// The note /rename leaves the model, as a live session words it.
+const renameNote = (name: string) =>
+  `<system-reminder>\nThe user named this session "${name}". This may indicate the session's focus or intent.\n</system-reminder>`
+
+// Claude Code's /rename beneath the plugin, answering each run with the notes given for its
+// arguments: none when a rename fails, and none for a bare /rename, which makes a name up and
+// prints it. It keeps each answer, so a test can tell how often it ran.
+const renameBeneath = (on: On, notes: (args: string) => string[]) => {
+  const runs: unknown[] = []
+  on('command.run', { command: 'rename' }, ($, e) => {
+    const context = notes(e.args ?? '')
+    const result = context.length === 0 ? {} : { context }
+    runs.push(result)
+    return result
+  })
+  on('ui.render', { component: 'CommandOutput' }, () => ({ type: 'engine', ref: 1 }))
+  return runs
+}
+
+// Raises /rename the way typing it at the prompt does.
+const rename = ($: Engine, args = '') =>
+  $.command.run({ command: 'rename', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+
+// Draws the line a /rename printed in the transcript.
+const renameLine = ($: Engine, args: string, text: string) =>
+  $.ui.mount({
+    plugin: 'limits-meter',
+    surface: 'terminal',
+    component: 'CommandOutput',
+    props: { command: 'rename', args, text, isErrored: false },
+    viewport: { columns: 120, rows: 40 },
+  })
+
+describe('/rename', () => {
+  test('shows the new name at once, as the note Claude Code leaves the model names it', async ($, on) => {
+    engineBeneath(on)
+    settingsHooksBeneath(on)
+    renameBeneath(on, args => [renameNote(args.trim())])
+    await startNamed($, 'old')
+    await measure($, READINGS)
+
+    const ui = await mountHint($, 'terminal', 120)
+    await rename($, 'limits work')
+    expect((await textsOf(ui)).slice(0, 3)).toEqual(['limits work', '   ', 'Session '])
+    await ui.unmount()
+  })
+
+  test('shows the name Claude Code kept: a suffix it added, and the characters it wrote as references', async ($, on) => {
+    engineBeneath(on)
+    renameBeneath(on, () => [
+      '<system-reminder>\nThe user asked to name this session "R&amp;D"; another live session on this machine already holds that name, so this session is "R&amp;D &lt;tools&gt;&#160;2". The requested name may indicate the session\'s focus or intent.\n</system-reminder>',
+    ])
+
+    const ui = await mountHint($, 'terminal', 120)
+    await rename($, 'R&D')
+    expect(await textsOf(ui)).toEqual(['R&D <tools> 2'])
+    await ui.unmount()
+  })
+
+  test('a /rename that failed keeps the name; one whose note reads otherwise shows the name typed', async ($, on) => {
+    engineBeneath(on)
+    settingsHooksBeneath(on)
+    let notes: string[] = []
+    renameBeneath(on, () => notes)
+    await startNamed($, 'kept')
+
+    const ui = await mountHint($, 'terminal', 120)
+    await rename($, 'refused')
+    expect(await textsOf(ui)).toEqual(['kept'])
+
+    notes = ['<system-reminder>\nThis session is called something new now.\n</system-reminder>']
+    await rename($, '  typed  ')
+    expect(await textsOf(ui)).toEqual(['typed'])
+    await ui.unmount()
+  })
+
+  test('passes the run on as Claude Code made it, and runs it once', async ($, on) => {
+    engineBeneath(on)
+    const runs = renameBeneath(on, args => [renameNote(args)])
+
+    expect(await rename($, 'once')).toMatchObject({ context: [renameNote('once')] })
+    expect(runs).toHaveLength(1)
+  })
+
+  test('a bare /rename shows the name it made up, from the line it prints', async ($, on) => {
+    const engine = engineBeneath(on)
+    settingsHooksBeneath(on)
+    renameBeneath(on, args => (args === '' ? [] : [renameNote(args)]))
+    await startNamed($, 'old')
+
+    const ui = await mountHint($, 'terminal', 120)
+    await rename($)
+    const line = await renameLine(
+      $,
+      '',
+      'Session renamed to: made-up-name. Other sessions may still show the old name: the session registry could not be updated (run with --debug for the cause)',
+    )
+    await engine.clock.advance(0)
+    expect(await textsOf(ui)).toEqual(['made-up-name'])
+    expect(await line.drawn()).toEqual({ type: 'engine', ref: 1 })
+    await line.unmount()
+
+    // Its line drawn again, or an older bare /rename's, once a name was typed since.
+    await rename($, 'typed')
+    const old = await renameLine($, '', 'Session renamed to: stale')
+    await engine.clock.advance(0)
+    expect(await textsOf(ui)).toEqual(['typed'])
+    await old.unmount()
+    await ui.unmount()
+  })
+
+  test("a bare /rename's line keeps the name when it says none, or comes too late to be its own", async ($, on) => {
+    const engine = engineBeneath(on)
+    settingsHooksBeneath(on)
+    renameBeneath(on, () => [])
+    await startNamed($, 'kept')
+    const ui = await mountHint($, 'terminal', 120)
+
+    await rename($)
+    const failed = await renameLine($, '', 'Could not generate a name: no conversation context yet. Usage: /rename <name>')
+    await engine.clock.advance(0)
+    expect(await textsOf(ui)).toEqual(['kept'])
+    await failed.unmount()
+
+    await rename($)
+    await engine.clock.advance(6_000)
+    const late = await renameLine($, '', 'Session renamed to: late')
+    await engine.clock.advance(0)
+    expect(await textsOf(ui)).toEqual(['kept'])
+    await late.unmount()
+    await ui.unmount()
+  })
+
+  // Where the settings hook events never reach the mod (an organization's managed settings), a
+  // /rename is all that names the session.
+  test('with no SessionStart to bring a name, /clear keeps the name and /resume drops it', async ($, on) => {
+    const engine = engineBeneath(on)
+    renameBeneath(on, args => [renameNote(args)])
+    const state = stateBeneath(on)
+    await startSession($)
+    await rename($, 'mine')
+
+    await endSession($, 'clear')
+    state.empty()
+    await engine.clock.advance(1_000)
+    const cleared = await mountHint($, 'terminal', 120)
+    expect(await textsOf(cleared)).toEqual(['mine'])
+    await cleared.unmount()
+
+    await endSession($, 'resume')
+    state.empty()
+    await engine.clock.advance(1_000)
+    const resumed = await mountHint($, 'terminal', 120)
+    expect(await resumed.drawn()).toEqual({ type: 'engine', ref: 0 })
+    await resumed.unmount()
   })
 })
