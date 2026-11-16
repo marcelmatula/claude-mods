@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.1
+
+- Fix: `/rename` shows on the row at once. The row kept the old name, or none, until your next prompt, while Claude Code's prompt border already showed the new one. A name you type shows as Claude Code kept it, with the suffix it adds when another live session already has that name; a bare `/rename`, which makes a name up, shows the name it printed. `/name` is the same command.
+- Checked in a live session: after `/clear` the row keeps the name, as Claude Code keeps it on the session, and after `/resume` it shows the resumed session's name, or none.
+- Access: two new hooks, declared in `capabilities.json` and the README's "What it can access" section. `command.run` on `rename` lets each `/rename` run as Claude Code made it and reads the new name from the note it leaves Claude. `ui.render` on `CommandOutput`, for `/rename`'s line only, reads the name a bare `/rename` printed, for a few seconds after it runs, and draws the line unchanged.
+
+Upgrade: nothing to do.
+
 ## 0.6.0
 
 - New: the session's name leads the row, in bold, once you have named the session with `/rename` or `claude --name`: `limits work   Session ███      38% ↻2:31   …`. Before the session has any figures, the name is the row on its own. A session you haven't named shows no name, as before: Claude Code doesn't tell a mod the title it gives a session by itself.

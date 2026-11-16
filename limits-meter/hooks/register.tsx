@@ -62,6 +62,21 @@ const NAME_CELLS = 24
 const NAME_MIN_CELLS = 8
 const ELLIPSIS = '…'
 
+// The note /rename leaves the model says what the session is called now: `named this session
+// "<name>"`, or, when another live session already held the name asked for, `so this session
+// is "<name>"`. Claude Code writes &, < and > in it, and some other characters, as character
+// references.
+const RENAME_NOTES = [/so this session is "(.*)"\. /s, /named this session "(.*)"\. /s]
+
+// A bare /rename makes a name up and leaves the model no note, so its name is only in the line
+// it prints: "Session renamed to: <name>", with ". Other sessions may still show the old name…"
+// after it when the session registry could not be updated.
+const RENAME_LINE = /^Session renamed to: (.+?)(?:\. Other sessions may still show the old name\b.*)?$/s
+
+// How long after a bare /rename the line it prints is awaited. It is drawn within a frame or
+// two; an older /rename's line, drawn again later, is not this one's.
+const RENAME_LINE_WAIT_MS = 5_000
+
 type Tier = { labels: 'long' | 'short'; bar: number; countdowns: boolean; cache: boolean }
 
 // From the most detailed down; the first that fits is drawn. The tiers without the cache
@@ -303,12 +318,13 @@ async function showStatus($: EngineInterface) {
   }
 }
 
-// The name the classic hooks last brought to this load of the module, undefined before
-// they have. A reload starts it over while the state keeps the name it had.
+// The name the classic hooks or a /rename last brought to this load of the module, undefined
+// before they have and after a /resume. A reload starts it over while the state keeps the name
+// it had.
 let nameSeen: string | undefined
 
-// Keeps the session's name as Claude Code handed it to a settings hook, no name included,
-// so a session that lost its name loses it from the row.
+// Keeps the session's name as Claude Code handed it to a settings hook or /rename named it, no
+// name included, so a session that lost its name loses it from the row.
 async function nameSession($: EngineInterface, title: string | undefined) {
   const name = title?.trim() ?? ''
   nameSeen = name
@@ -318,6 +334,44 @@ async function nameSession($: EngineInterface, title: string | undefined) {
     }
   } catch {
     // The next prompt brings it again.
+  }
+}
+
+// The text in a note to the model with its character references read back.
+const unescaped = (text: string) =>
+  text.replace(/&(amp|lt|gt|#\d+);/g, (_: string, ref: string) =>
+    ref === 'amp' ? '&' : ref === 'lt' ? '<' : ref === 'gt' ? '>' : String.fromCharCode(Number(ref.slice(1))),
+  )
+
+// The name the notes of a /rename say the session has, undefined when none says one.
+const renamedIn = (notes: readonly string[]) => {
+  for (const pattern of RENAME_NOTES) {
+    for (const note of notes) {
+      const found = pattern.exec(note)?.[1]
+      if (found !== undefined) {
+        return unescaped(found)
+      }
+    }
+  }
+
+  return undefined
+}
+
+// When the line of the latest bare /rename stops being awaited, 0 while none is.
+let renameLineUntil = 0
+
+// A /rename has run. Given a name, it leaves the model a note saying what the session is now
+// called, which is the name as Claude Code kept it, and none when it failed, the session keeping
+// its name. Should the note's wording change, the name typed stands in for it. A bare /rename
+// leaves no note, so the line it prints is awaited.
+async function renamed($: EngineInterface, args: string, notes: readonly string[]) {
+  if (args.trim() === '') {
+    renameLineUntil = (await $.clock.now()) + RENAME_LINE_WAIT_MS
+    return
+  }
+
+  if (notes.length > 0) {
+    await nameSession($, renamedIn(notes) ?? args)
   }
 }
 
@@ -473,7 +527,14 @@ export const register: Register = (on, options) => {
 
   // /clear and /resume empty the session's state and run no session.start after it, while
   // the engine keeps its figures, so the meters would stay away until a window moved.
+  // A /clear keeps the session's name, and its SessionStart brings it again; a /resume takes
+  // the resumed session's, which only its SessionStart brings.
   on('session.end', async ($, e, next) => {
+    renameLineUntil = 0
+    if (e.reason === 'resume') {
+      nameSeen = undefined
+    }
+
     if (e.reason === 'clear' || e.reason === 'resume') {
       $.clock.after(REFILL_DELAY_MS, () => void fill($))
     }
@@ -481,9 +542,9 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  // Claude Code tells a mod the session's name only through these two settings hook events:
-  // at the start (a --name, or the name of a session resumed), and with each prompt, which
-  // brings a /rename. Nothing else of either is read, and both go on as they came.
+  // Claude Code tells a mod the session's name through these two settings hook events: at the
+  // start (a --name, the name a /clear keeps, or the name of a session resumed), and with each
+  // prompt. Nothing else of either is read, and both go on as they came.
   on('classic.SessionStart', async ($, e, next) => {
     await nameSession($, e.session_title)
     return next(e)
@@ -491,6 +552,34 @@ export const register: Register = (on, options) => {
 
   on('classic.UserPromptSubmit', async ($, e, next) => {
     await nameSession($, e.session_title)
+    return next(e)
+  })
+
+  // /rename (and /name, which runs it) brings no settings hook event, so the row takes the new
+  // name from what the command answers. The run goes on as Claude Code made it, and is never
+  // run again: what fails after it is left to the next prompt.
+  on('command.run', { command: 'rename' }, async ($, e, next) => {
+    const result = await next(e)
+    try {
+      await renamed($, e.args ?? '', result.context ?? [])
+    } catch {
+      // The next prompt brings the name.
+    }
+
+    return result
+  })
+
+  // The line a bare /rename prints, the only place its name is told. A drawing writes no
+  // state, so the name is kept just after it.
+  on('ui.render', { component: 'CommandOutput', props: { command: 'rename' } }, async ($, e, next) => {
+    if (renameLineUntil !== 0 && e.props.args.trim() === '' && !e.props.isErrored) {
+      const name = RENAME_LINE.exec(e.props.text.trim())?.[1]
+      if (name !== undefined && (await $.clock.now()) <= renameLineUntil) {
+        renameLineUntil = 0
+        $.clock.after(0, () => void nameSession($, name))
+      }
+    }
+
     return next(e)
   })
 
